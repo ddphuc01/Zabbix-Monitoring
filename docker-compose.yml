@@ -1,0 +1,622 @@
+version: '3.8'
+
+services:
+  # ========================================
+  # PostgreSQL Database
+  # ========================================
+  postgres-server:
+    image: "${POSTGRESQL_IMAGE}:${POSTGRESQL_IMAGE_TAG}"
+    container_name: zabbix-postgres
+    restart: "${RESTART_POLICY}"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - /etc/timezone:/etc/timezone:ro
+    environment:
+      POSTGRES_DB: zabbix
+      POSTGRES_USER: zabbix
+      POSTGRES_PASSWORD_FILE: /run/secrets/POSTGRES_PASSWORD
+    secrets:
+      - POSTGRES_PASSWORD
+    networks:
+      - database
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U zabbix -d zabbix"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 2G
+        reservations:
+          cpus: '0.5'
+          memory: 1G
+
+  # ========================================
+  # Database Initialization (One-time)
+  # Note: This container is optional. Database schema is created
+  # automatically by zabbix-server on first run if not exists.
+  # Disabled by default to avoid startup blocking issues.
+  # ========================================
+  # server-db-init:
+  #   image: "${ZABBIX_SERVER_PGSQL_IMAGE}:${ZABBIX_ALPINE_IMAGE_TAG}${ZABBIX_IMAGE_TAG_POSTFIX}"
+  #   container_name: zabbix-db-init
+  #   restart: "no"
+  #   volumes:
+  #     - /etc/timezone:/etc/timezone:ro
+  #   environment:
+  #     DB_SERVER_HOST: postgres-server
+  #     POSTGRES_DB: zabbix
+  #     POSTGRES_USER_FILE: /run/secrets/POSTGRES_USER
+  #     POSTGRES_PASSWORD_FILE: /run/secrets/POSTGRES_PASSWORD
+  #   secrets:
+  #     - POSTGRES_USER
+  #     - POSTGRES_PASSWORD
+  #   networks:
+  #     - database
+  #   depends_on:
+  #     postgres-server:
+  #       condition: service_healthy
+  #   labels:
+  #     com.zabbix.description: "Database initialization container"
+  #     com.zabbix.os: "${ALPINE_OS_TAG}"
+
+  # ========================================
+  # Zabbix Server (Core Monitoring Engine)
+  # ========================================
+  zabbix-server:
+    build:
+      context: ./zabbix/server
+      dockerfile: Dockerfile
+      args:
+        ZABBIX_ALPINE_IMAGE_TAG: "${ZABBIX_ALPINE_IMAGE_TAG}"
+        ZABBIX_IMAGE_TAG_POSTFIX: "${ZABBIX_IMAGE_TAG_POSTFIX}"
+    container_name: zabbix-server
+    restart: "${RESTART_POLICY}"
+    ports:
+      - "${ZABBIX_SERVER_PORT}:10051"
+    volumes:
+      - /etc/timezone:/etc/timezone:ro
+      - /etc/localtime:/etc/localtime:ro
+      - ${DATA_DIRECTORY}/usr/lib/zabbix/alertscripts:/usr/lib/zabbix/alertscripts:ro
+      - ${DATA_DIRECTORY}/usr/lib/zabbix/externalscripts:/usr/lib/zabbix/externalscripts:ro
+      - ${DATA_DIRECTORY}/var/lib/zabbix/export:/var/lib/zabbix/export:rw
+      - ${DATA_DIRECTORY}/var/lib/zabbix/modules:/var/lib/zabbix/modules:ro
+      - ${DATA_DIRECTORY}/var/lib/zabbix/enc:/var/lib/zabbix/enc:ro
+      - ${DATA_DIRECTORY}/var/lib/zabbix/ssh_keys:/var/lib/zabbix/ssh_keys:ro
+      - ${DATA_DIRECTORY}/var/lib/zabbix/mibs:/var/lib/zabbix/mibs:ro
+      - ${DATA_DIRECTORY}/var/lib/zabbix/ssl/certs:/var/lib/zabbix/ssl/certs:ro
+      - ${DATA_DIRECTORY}/var/lib/zabbix/ssl/keys:/var/lib/zabbix/ssl/keys:ro
+      - ${DATA_DIRECTORY}/var/lib/zabbix/ssl/ssl_ca:/var/lib/zabbix/ssl/ssl_ca:rw
+      - snmptraps:/var/lib/zabbix/snmptraps:ro
+    environment:
+      DB_SERVER_HOST: postgres-server
+      POSTGRES_DB: zabbix
+      POSTGRES_USER_FILE: /run/secrets/POSTGRES_USER
+      POSTGRES_PASSWORD_FILE: /run/secrets/POSTGRES_PASSWORD
+      ZBX_ENABLE_SNMP_TRAPS: "true"
+      ZBX_STARTPOLLERS: 5
+      ZBX_STARTPOLLERSUNREACHABLE: 1
+      ZBX_STARTTRAPPERS: 5
+      ZBX_STARTPINGERS: 1
+      ZBX_STARTDISCOVERERS: 1
+      ZBX_STARTHTTPPOLLERS: 1
+      ZBX_JAVAGATEWAY_ENABLE: "true"
+      ZBX_JAVAGATEWAY: zabbix-java-gateway
+      ZBX_JAVAGATEWAYPORT: 10052
+      ZBX_STARTJAVAPOLLERS: 5
+      ZBX_CACHESIZE: 128M
+      ZBX_HISTORYCACHESIZE: 64M
+      ZBX_TRENDCACHESIZE: 32M
+      ZBX_VALUECACHESIZE: 128M
+      TZ: "${TZ}"
+      # Telegram integration for alert scripts
+      TELEGRAM_BOT_TOKEN: "${TELEGRAM_BOT_TOKEN}"
+      AI_WEBHOOK_URL: "http://ai-webhook:5000/analyze"
+    secrets:
+      - POSTGRES_USER
+      - POSTGRES_PASSWORD
+    networks:
+      - frontend
+      - backend
+      - database
+    depends_on:
+      postgres-server:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "zabbix_server", "-R", "config_cache_reload"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 1G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+    labels:
+      com.zabbix.description: "Zabbix server with PostgreSQL database support"
+      com.zabbix.company: "Zabbix SIA"
+      com.zabbix.component: "zabbix-server"
+      com.zabbix.dbtype: "pgsql"
+      com.zabbix.os: "${ALPINE_OS_TAG}"
+
+  # ========================================
+  # Zabbix Web Interface (Nginx)
+  # ========================================
+  zabbix-web-nginx:
+    image: "${ZABBIX_WEB_NGINX_PGSQL_IMAGE}:${ZABBIX_ALPINE_IMAGE_TAG}${ZABBIX_IMAGE_TAG_POSTFIX}"
+    container_name: zabbix-web
+    restart: "${RESTART_POLICY}"
+    ports:
+      - "${ZABBIX_WEB_NGINX_HTTP_PORT}:8080"
+      - "${ZABBIX_WEB_NGINX_HTTPS_PORT}:8443"
+    volumes:
+      - /etc/timezone:/etc/timezone:ro
+      - /etc/localtime:/etc/localtime:ro
+      - ${DATA_DIRECTORY}/var/lib/zabbix/ssl/certs:/etc/ssl/nginx/certs:ro
+      - ${DATA_DIRECTORY}/var/lib/zabbix/ssl/keys:/etc/ssl/nginx/keys:ro
+    environment:
+      DB_SERVER_HOST: postgres-server
+      POSTGRES_DB: zabbix
+      POSTGRES_USER_FILE: /run/secrets/POSTGRES_USER
+      POSTGRES_PASSWORD_FILE: /run/secrets/POSTGRES_PASSWORD
+      ZBX_SERVER_HOST: zabbix-server
+      ZBX_SERVER_PORT: 10051
+      ZBX_SERVER_NAME: "Zabbix Monitoring Server"
+      PHP_TZ: "${PHP_TZ}"
+      ZBX_MAXEXECUTIONTIME: 600
+      ZBX_MEMORYLIMIT: 256M
+      ZBX_POSTMAXSIZE: 32M
+      ZBX_UPLOADMAXFILESIZE: 16M
+      ZBX_SESSION_NAME: zbx_sessionid
+    secrets:
+      - POSTGRES_USER
+      - POSTGRES_PASSWORD
+    networks:
+      - frontend
+      - backend
+      - database
+    depends_on:
+      zabbix-server:
+        condition: service_healthy
+      postgres-server:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 256M
+    labels:
+      com.zabbix.description: "Zabbix web interface on Nginx web server with PostgreSQL database support"
+      com.zabbix.company: "Zabbix SIA"
+      com.zabbix.component: "zabbix-web"
+      com.zabbix.webserver: "nginx"
+      com.zabbix.dbtype: "pgsql"
+      com.zabbix.os: "${ALPINE_OS_TAG}"
+
+  # ========================================
+  # Zabbix Agent 2 (Modern Agent)
+  # ========================================
+  zabbix-agent2:
+    image: "${ZABBIX_AGENT2_IMAGE}:${ZABBIX_ALPINE_IMAGE_TAG}${ZABBIX_IMAGE_TAG_POSTFIX}"
+    container_name: zabbix-agent2
+    restart: "${RESTART_POLICY}"
+    ports:
+      - "${ZABBIX_AGENT2_PORT}:10050"
+      - "${ZABBIX_AGENT2_STATUS_PORT}:31999"
+    volumes:
+      - /etc/timezone:/etc/timezone:ro
+      - /etc/localtime:/etc/localtime:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /dev:/host/dev:ro
+      - /:/hostfs:ro
+    environment:
+      ZBX_HOSTNAME: "Zabbix server"
+      ZBX_SERVER_HOST: zabbix-server
+      ZBX_SERVER_PORT: 10051
+      ZBX_PASSIVE_ALLOW: "true"
+      ZBX_ACTIVE_ALLOW: "true"
+      ZBX_DEBUGLEVEL: 3
+      ZBX_TIMEOUT: 10
+      # Docker monitoring
+      DOCKER_HOST: unix:///var/run/docker.sock
+    privileged: true
+    pid: "host"
+    user: "0:0"
+    networks:
+      - backend
+    depends_on:
+      - zabbix-server
+    labels:
+      com.zabbix.description: "Zabbix agent 2 with Docker monitoring"
+      com.zabbix.company: "Zabbix SIA"
+      com.zabbix.component: "zabbix-agent2"
+      com.zabbix.os: "${ALPINE_OS_TAG}"
+
+  # ========================================
+  # Zabbix Java Gateway
+  # ========================================
+  zabbix-java-gateway:
+    image: "${ZABBIX_JAVA_GATEWAY_IMAGE}:${ZABBIX_ALPINE_IMAGE_TAG}${ZABBIX_IMAGE_TAG_POSTFIX}"
+    container_name: zabbix-java-gateway
+    restart: "${RESTART_POLICY}"
+    ports:
+      - "${ZABBIX_JAVA_GATEWAY_PORT}:10052"
+    environment:
+      ZBX_START_POLLERS: 5
+      ZBX_TIMEOUT: 3
+      ZBX_DEBUGLEVEL: info
+    networks:
+      - backend
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 256M
+    labels:
+      com.zabbix.description: "Zabbix Java Gateway"
+      com.zabbix.company: "Zabbix SIA"
+      com.zabbix.component: "java-gateway"
+      com.zabbix.os: "${ALPINE_OS_TAG}"
+
+  # ========================================
+  # Zabbix Web Service (Report Generation)
+  # ========================================
+  zabbix-web-service:
+    image: "${ZABBIX_WEB_SERVICE_IMAGE}:${ZABBIX_ALPINE_IMAGE_TAG}${ZABBIX_IMAGE_TAG_POSTFIX}"
+    container_name: zabbix-web-service
+    restart: "${RESTART_POLICY}"
+    ports:
+      - "${ZABBIX_WEB_SERVICE_PORT}:10053"
+    environment:
+      ZBX_ALLOWEDIP: zabbix-server
+      ZBX_DEBUGLEVEL: 3
+    cap_add:
+      - SYS_ADMIN
+    networks:
+      - backend
+    depends_on:
+      - zabbix-server
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 256M
+    labels:
+      com.zabbix.description: "Zabbix web service for performing various tasks using headless web browser"
+      com.zabbix.company: "Zabbix SIA"
+      com.zabbix.component: "web-service"
+      com.zabbix.os: "${ALPINE_OS_TAG}"
+
+  # ========================================
+  # SNMP Traps Receiver
+  # ========================================
+  zabbix-snmptraps:
+    image: "${ZABBIX_SNMPTRAPS_IMAGE}:${ZABBIX_ALPINE_IMAGE_TAG}${ZABBIX_IMAGE_TAG_POSTFIX}"
+    container_name: zabbix-snmptraps
+    restart: "${RESTART_POLICY}"
+    ports:
+      - "${ZABBIX_SNMPTRAPS_PORT}:1162/udp"
+    volumes:
+      - snmptraps:/var/lib/zabbix/snmptraps:rw
+    networks:
+      - backend
+    labels:
+      com.zabbix.description: "Zabbix SNMP traps receiver"
+      com.zabbix.company: "Zabbix SIA"
+      com.zabbix.component: "snmptraps"
+      com.zabbix.os: "${ALPINE_OS_TAG}"
+
+  # ========================================
+  # Redis Cache (AI Response Caching)
+  # ========================================
+  redis:
+    image: redis:7-alpine
+    container_name: zabbix-redis
+    restart: "${RESTART_POLICY}"
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    command: redis-server --appendonly yes --appendfsync everysec
+    networks:
+      - backend
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+        reservations:
+          cpus: '0.1'
+          memory: 128M
+    labels:
+      com.zabbix.description: "Redis cache for AI responses"
+      com.zabbix.component: "cache"
+
+  # ========================================
+  # AI Webhook Handler (Gemini Integration)
+  # ========================================
+  ai-webhook:
+    build:
+      context: ./ai-services/webhook-handler
+      dockerfile: Dockerfile
+    container_name: zabbix-ai-webhook
+    restart: "${RESTART_POLICY}"
+    ports:
+      - "5000:5000"
+    environment:
+      GEMINI_API_KEY: "${GEMINI_API_KEY}"
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      CACHE_TTL: 3600
+      MAX_TOKENS: 1000
+      TEMPERATURE: 0.3
+      DEBUG: "false"
+    dns:
+      - 8.8.8.8
+      - 8.8.4.4
+    networks:
+      - backend
+    depends_on:
+      redis:
+        condition: service_healthy
+      zabbix-server:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:5000/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 1G
+        reservations:
+          cpus: '0.25'
+          memory: 256M
+    labels:
+      com.zabbix.description: "AI webhook handler with Gemini integration"
+      com.zabbix.component: "ai-webhook"
+
+  # ========================================
+  # Ansible Executor (Diagnostic Automation)
+  # ========================================
+  ansible-executor:
+    build:
+      context: ./ai-services/ansible-executor
+      dockerfile: Dockerfile
+    container_name: zabbix-ansible-executor
+    restart: "${RESTART_POLICY}"
+    environment:
+      ANSIBLE_DIR: /ansible
+      ANSIBLE_HOST_KEY_CHECKING: "False"
+      ANSIBLE_STDOUT_CALLBACK: json
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      DIAGNOSTIC_TIMEOUT: 60
+      GEMINI_API_KEY: "${GEMINI_API_KEY}"
+    volumes:
+      - ./ansible:/ansible:ro
+      - ./ssh-keys:/root/.ssh:ro
+      - ansible-logs:/var/log/ansible
+    networks:
+      - backend
+    depends_on:
+      redis:
+        condition: service_healthy
+      ai-webhook:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import ansible_executor; print('OK')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+        reservations:
+          cpus: '0.1'
+          memory: 128M
+    labels:
+      com.zabbix.description: "Ansible executor for automated diagnostics"
+      com.zabbix.component: "ansible-executor"
+
+  # ========================================
+  # Ollama (Local LLM with Qwen)
+  # ========================================
+  ollama:
+    image: ollama/ollama:latest
+    container_name: zabbix-ollama
+    restart: "${RESTART_POLICY}"
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama-data:/root/.ollama
+    networks:
+      - backend
+    deploy:
+      resources:
+        limits:
+          cpus: '4.0'
+          memory: 8G
+        reservations:
+          cpus: '1.0'
+          memory: 2G
+    labels:
+      com.zabbix.description: "Ollama local LLM server with Qwen model"
+      com.zabbix.component: "ollama"
+
+  # ========================================
+  # Open WebUI (Chat Interface)
+  # ========================================
+  open-webui:
+    image: ghcr.io/open-webui/open-webui:main
+    container_name: zabbix-chat-ui
+    restart: "${RESTART_POLICY}"
+    ports:
+      - "3000:8080"
+    environment:
+      - OLLAMA_BASE_URL=http://ollama:11434
+      - WEBUI_NAME=Zabbix AI Assistant
+      - WEBUI_SECRET_KEY=${WEBUI_SECRET_KEY}
+      - ENABLE_SIGNUP=false
+      - DEFAULT_USER_ROLE=user
+      - ENABLE_API_KEY=true
+    volumes:
+      - open-webui-data:/app/backend/data
+    networks:
+      - backend
+    depends_on:
+      - ollama
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 1G
+        reservations:
+          cpus: '0.25'
+          memory: 256M
+    labels:
+      com.zabbix.description: "Open WebUI chat interface for Zabbix"
+      com.zabbix.component: "chat-ui"
+
+  # ========================================
+  # Zabbix API Connector
+  # ========================================
+  zabbix-api-connector:
+    build:
+      context: ./ai-services/zabbix-connector
+      dockerfile: Dockerfile
+    container_name: zabbix-api-connector
+    restart: "${RESTART_POLICY}"
+    ports:
+      - "8001:8000"
+    environment:
+      ZABBIX_API_URL: "http://zabbix-web:8080/api_jsonrpc.php"
+      ZABBIX_USER: "${ZABBIX_API_USER}"
+      ZABBIX_PASSWORD: "${ZABBIX_API_PASSWORD}"
+    networks:
+      - backend
+    depends_on:
+      zabbix-web-nginx:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+        reservations:
+          cpus: '0.1'
+          memory: 128M
+    labels:
+      com.zabbix.description: "Zabbix API connector for Open WebUI"
+      com.zabbix.component: "api-connector"
+
+
+# ========================================
+# Networks
+# ========================================
+networks:
+  frontend:
+    driver: bridge
+    ipam:
+      driver: "${FRONTEND_NETWORK_DRIVER}"
+      config:
+        - subnet: "${FRONTEND_SUBNET}"
+    labels:
+      com.zabbix.description: "Frontend network for web interface"
+
+  backend:
+    driver: bridge
+    # internal: true  # Commented out to allow AI services to access external APIs
+    ipam:
+      driver: "${BACKEND_NETWORK_DRIVER}"
+      config:
+        - subnet: "${BACKEND_SUBNET}"
+    labels:
+      com.zabbix.description: "Backend network for internal communication and AI services"
+
+  database:
+    driver: bridge
+    internal: true
+    ipam:
+      driver: "${DATABASE_NETWORK_DRIVER}"
+    labels:
+      com.zabbix.description: "Database network (isolated)"
+
+# ========================================
+# Volumes
+# ========================================
+volumes:
+  postgres-data:
+    driver: local
+    labels:
+      com.zabbix.description: "PostgreSQL database data"
+
+  snmptraps:
+    driver: local
+    labels:
+      com.zabbix.description: "SNMP traps storage"
+
+  redis-data:
+    driver: local
+    labels:
+      com.zabbix.description: "Redis cache data"
+
+  ansible-logs:
+    driver: local
+    labels:
+      com.zabbix.description: "Ansible execution logs"
+
+  open-webui-data:
+    driver: local
+    labels:
+      com.zabbix.description: "Open WebUI chat history and configurations"
+
+  ollama-data:
+    driver: local
+    labels:
+      com.zabbix.description: "Ollama models and data"
+
+# ========================================
+# Secrets
+# ========================================
+secrets:
+  POSTGRES_USER:
+    file: ${ENV_VARS_DIRECTORY}/.POSTGRES_USER
+  POSTGRES_PASSWORD:
+    file: ${ENV_VARS_DIRECTORY}/.POSTGRES_PASSWORD

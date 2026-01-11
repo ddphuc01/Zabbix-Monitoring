@@ -1,0 +1,42 @@
+# Gitignore for Zabbix Monitoring
+
+# Secrets and sensitive data
+env_vars/.*
+env_vars/.POSTGRES_*
+env_vars/.MYSQL_*
+env_vars/.env_srv
+!env_vars/.gitkeep
+
+# Data directories
+zbx_env/var/
+zbx_env/usr/
+zbx_env/backups/
+zbx_env/postgres-data/
+
+# Docker volumes
+postgres-data/
+snmptraps/
+
+# Logs
+*.log
+logs/
+
+# Temporary files
+*.tmp
+*.swp
+*.swo
+*~
+
+# IDE
+.vscode/
+.idea/
+*.iml
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Backup files
+*.bak
+*.backup
+*.old

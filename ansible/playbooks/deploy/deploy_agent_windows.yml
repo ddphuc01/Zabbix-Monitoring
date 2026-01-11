@@ -1,0 +1,132 @@
+---
+- name: Deploy Zabbix Agent 2 to Windows Hosts
+  hosts: "{{ target_host | default('windows') }}"
+  gather_facts: yes
+  
+  vars:
+    zabbix_version: "7.0.0"
+    zabbix_server_ip: "192.168.1.203"
+    zabbix_server_port: 10051
+    agent_download_url: "https://cdn.zabbix.com/zabbix/binaries/stable/7.0/7.0.0/zabbix_agent2-7.0.0-windows-amd64-openssl.msi"
+    install_path: "C:\\Program Files\\Zabbix Agent 2"
+    temp_path: "C:\\Temp"
+    
+  tasks:
+    - name: Display deployment information
+      debug:
+        msg:
+          - "Deploying Zabbix Agent 2 v{{ zabbix_version }}"
+          - "Target: {{ ansible_hostname }}"
+          - "Zabbix Server: {{ zabbix_server_ip }}"
+    
+    - name: Create temp directory
+      win_file:
+        path: "{{ temp_path }}"
+        state: directory
+    
+    - name: Kill stuck MSI processes
+      win_shell: |
+        Get-Process msiexec -ErrorAction SilentlyContinue | Stop-Process -Force
+        Start-Sleep -Seconds 2
+      ignore_errors: yes
+    
+    - name: Remove incomplete Zabbix installation
+      win_shell: |
+        if (Test-Path "C:\Program Files\Zabbix Agent 2") {
+          Remove-Item -Path "C:\Program Files\Zabbix Agent 2" -Recurse -Force -ErrorAction SilentlyContinue
+        }
+      ignore_errors: yes
+    
+    - name: Copy Zabbix Agent 2 MSI from Ubuntu to Windows
+      win_copy:
+        src: /tmp/zabbix_agent2.msi
+        dest: "{{ temp_path }}\\zabbix_agent2.msi"
+      register: copy_result
+    
+    - name: Check if Zabbix Agent service exists
+      win_service:
+        name: "Zabbix Agent 2"
+      register: agent_service
+      ignore_errors: yes
+    
+    - name: Stop existing Zabbix Agent service
+      win_service:
+        name: "Zabbix Agent 2"
+        state: stopped
+      when: agent_service.exists
+      ignore_errors: yes
+    
+    - name: Install Zabbix Agent 2 (async)
+      win_shell: |
+        $process = Start-Process msiexec.exe -ArgumentList '/i', '{{ temp_path }}\zabbix_agent2.msi', '/qn', '/norestart', 'SERVER={{ zabbix_server_ip }}', 'SERVERACTIVE={{ zabbix_server_ip }}', 'HOSTNAME={{ ansible_hostname }}', 'HOSTMETADATA=windows auto', 'ENABLEPATH=1' -PassThru
+        Write-Output "Installation started with PID: $($process.Id)"
+      register: install_result
+    
+    - name: Wait for installation to complete
+      win_wait_for:
+        path: "C:\\Program Files\\Zabbix Agent 2\\zabbix_agent2.exe"
+        timeout: 120
+      register: wait_result
+      ignore_errors: yes
+      delegate_to: localhost
+    
+    - name: Configure Zabbix Agent
+      win_template:
+        src: zabbix_agent2.conf.j2
+        dest: "{{ install_path }}\\zabbix_agent2.conf"
+      notify: restart zabbix agent
+    
+    - name: Configure Windows Firewall for Zabbix Agent
+      win_firewall_rule:
+        name: "Zabbix Agent 2"
+        localport: 10050
+        action: allow
+        direction: in
+        protocol: tcp
+        state: present
+        enabled: yes
+        description: "Allow Zabbix Server to connect to agent"
+    
+    - name: Ensure Zabbix Agent service is running
+      win_service:
+        name: "Zabbix Agent 2"
+        state: started
+        start_mode: auto
+      register: service_result
+    
+    - name: Wait for agent to initialize
+      wait_for:
+        timeout: 5
+      delegate_to: localhost
+    
+    - name: Test agent connectivity
+      win_shell: |
+        Test-NetConnection -ComputerName {{ zabbix_server_ip }} -Port {{ zabbix_server_port }}
+      register: connectivity_test
+      changed_when: false
+    
+    - name: Display deployment summary
+      debug:
+        msg:
+          - "========================================="
+          - "  Zabbix Agent 2 Deployment Complete"
+          - "========================================="
+          - "Host: {{ ansible_hostname }}"
+          - "IP: {{ ansible_host }}"
+          - "Zabbix Server: {{ zabbix_server_ip }}"
+          - "Service Status: {{ service_result.state }}"
+          - "Connectivity: {{ 'OK' if 'TcpTestSucceeded : True' in connectivity_test.stdout else 'Failed' }}"
+          - ""
+          - "Next: Check Zabbix UI (Configuration → Hosts)"
+          - "Host should auto-register within 1-2 minutes"
+    
+    - name: Clean up installer
+      win_file:
+        path: "{{ temp_path }}\\zabbix_agent2.msi"
+        state: absent
+  
+  handlers:
+    - name: restart zabbix agent
+      win_service:
+        name: "Zabbix Agent 2"
+        state: restarted

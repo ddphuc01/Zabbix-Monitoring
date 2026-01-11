@@ -1,0 +1,7 @@
+Flask==3.0.0
+google-generativeai==0.3.2
+redis==5.0.1
+gunicorn==21.2.0
+ansible-runner==2.3.4
+ansible==9.1.0
+paramiko==3.4.0

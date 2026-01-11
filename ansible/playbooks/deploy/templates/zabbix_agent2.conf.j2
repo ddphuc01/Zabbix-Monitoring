@@ -1,0 +1,43 @@
+# Zabbix Agent 2 Configuration Template for Windows
+# Managed by Ansible
+
+# Zabbix Server IP
+Server={{ zabbix_server_ip }}
+
+# Zabbix Server for Active Checks
+ServerActive={{ zabbix_server_ip }}:{{ zabbix_server_port }}
+
+# Hostname
+Hostname={{ ansible_hostname }}
+
+# Host Metadata for Auto-Registration
+HostMetadata=windows auto
+
+# Listen Port
+ListenPort=10050
+
+# Listen IP (0.0.0.0 = all interfaces)
+ListenIP=0.0.0.0
+
+# Log Settings
+LogFile=C:\Program Files\Zabbix Agent 2\zabbix_agent2.log
+LogFileSize=10
+
+# Debug Level (0-5, 3=default)
+DebugLevel=3
+
+# Timeout
+Timeout=10
+
+# Remote Commands (disabled for security)
+EnableRemoteCommands=0
+
+# Unsafe User Parameters (disabled)
+UnsafeUserParameters=0
+
+# Performance Monitoring
+BufferSend=5
+BufferSize=100
+
+# Auto-registration
+HostMetadataItem=system.uname

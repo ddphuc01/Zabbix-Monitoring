@@ -1,0 +1,17 @@
+---
+# Deploy Zabbix Agent using Official Role
+- name: Deploy Zabbix Agent to Windows using Official Role
+  hosts: windows
+  gather_facts: yes
+  
+  vars:
+    zabbix_agent_version: 7.0
+    zabbix_agent_server: 192.168.1.203
+    zabbix_agent_serveractive: 192.168.1.203
+    zabbix_agent_hostname: "{{ ansible_hostname }}"
+    zabbix_agent_hostmetadata: "windows auto"
+    zabbix_agent_listenport: 10050
+    zabbix_agent_enableremotecommands: 0
+    
+  roles:
+    - role: community.zabbix.zabbix_agent

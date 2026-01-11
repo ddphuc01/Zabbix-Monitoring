@@ -1,0 +1,118 @@
+---
+- name: Diagnostic - CPU High Usage
+  hosts: "{{ target_host | default('all') }}"
+  gather_facts: yes
+  become: yes
+  
+  tasks:
+    - name: Get current timestamp
+      set_fact:
+        diagnostic_timestamp: "{{ ansible_date_time.iso8601 }}"
+    
+    - name: Get top 10 CPU-consuming processes
+      shell: ps aux --sort=-%cpu | head -11
+      register: top_processes
+      changed_when: false
+      
+    - name: Get load average
+      shell: uptime
+      register: load_average
+      changed_when: false
+      
+    - name: Get CPU info
+      shell: lscpu | grep -E 'CPU\(s\)|Model name|CPU MHz|Thread|Core'
+      register: cpu_info
+      changed_when: false
+      
+    - name: Get vmstat output (3 samples)
+      shell: vmstat 1 3 | tail -3
+      register: vmstat_output
+      changed_when: false
+      
+    - name: Get context switches rate
+      shell: sar -w 1 1 | grep -v Average | tail -1
+      register: context_switches
+      ignore_errors: yes
+      changed_when: false
+      
+    - name: Check CPU frequency
+      shell: |
+        if [ -f /sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq ]; then
+          cat /sys/devices/system/cpu/cpu*/cpufreq/scaling_cur_freq | head -4
+        else
+          echo "CPU frequency info not available"
+        fi
+      register: cpu_freq
+      ignore_errors: yes
+      changed_when: false
+      
+    - name: Get CPU temperature (if available)
+      shell: |
+        if command -v sensors >/dev/null 2>&1; then
+          sensors | grep -i core | head -4
+        else
+          echo "Temperature sensors not available"
+        fi
+      register: cpu_temp
+      ignore_errors: yes
+      changed_when: false
+      
+    - name: Check for CPU-intensive processes in logs
+      shell: journalctl -n 50 --no-pager | grep -iE '(cpu|load|performance)' || echo "No CPU-related log entries"
+      register: cpu_logs
+      ignore_errors: yes
+      changed_when: false
+      
+    - name: Get running process count
+      shell: ps aux | wc -l
+      register: process_count
+      changed_when: false
+      
+    - name: Check if any process is consuming >50% CPU
+      shell: ps aux --sort=-%cpu | awk '$3 > 50.0 {print $0}' | head -5
+      register: high_cpu_processes
+      changed_when: false
+      
+    - name: Compile diagnostic report
+      set_fact:
+        diagnostic_report:
+          success: true
+          timestamp: "{{ diagnostic_timestamp }}"
+          hostname: "{{ ansible_hostname }}"
+          fqdn: "{{ ansible_fqdn }}"
+          ip_address: "{{ ansible_default_ipv4.address | default('N/A') }}"
+          cpu_count: "{{ ansible_processor_vcpus }}"
+          cpu_cores: "{{ ansible_processor_cores }}"
+          cpu_model: "{{ ansible_processor[2] | default('Unknown') }}"
+          data:
+            top_processes: "{{ top_processes.stdout_lines }}"
+            load_average: "{{ load_average.stdout }}"
+            cpu_info: "{{ cpu_info.stdout_lines }}"
+            vmstat: "{{ vmstat_output.stdout_lines }}"
+            context_switches: "{{ context_switches.stdout | default('N/A') }}"
+            cpu_frequency: "{{ cpu_freq.stdout_lines }}"
+            cpu_temperature: "{{ cpu_temp.stdout_lines }}"
+            process_count: "{{ process_count.stdout }}"
+            high_cpu_processes: "{{ high_cpu_processes.stdout_lines }}"
+            recent_logs: "{{ cpu_logs.stdout_lines }}"
+          collection_duration: "{{ ansible_date_time.epoch | int - diagnostic_timestamp | int }}"
+          
+    - name: Display diagnostic summary
+      debug:
+        msg: 
+          - "✅ CPU Diagnostic Complete"
+          - "Host: {{ ansible_hostname }}"
+          - "CPU Count: {{ ansible_processor_vcpus }}"
+          - "Load: {{ load_average.stdout }}"
+          - "Top Process: {{ top_processes.stdout_lines[1] | default('N/A') }}"
+      
+    - name: Save diagnostic to file (optional)
+      copy:
+        content: "{{ diagnostic_report | to_nice_json }}"
+        dest: "/tmp/diagnostic_cpu_{{ ansible_hostname }}_{{ ansible_date_time.epoch }}.json"
+        mode: '0644'
+      when: save_to_file is defined and save_to_file | bool
+      
+    - name: Return diagnostic data
+      debug:
+        var: diagnostic_report
