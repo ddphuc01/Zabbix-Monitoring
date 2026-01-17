@@ -1,0 +1,110 @@
+---
+- name: Install and Configure Zabbix Agent
+  hosts: "{{ target_host | default('all') }}"
+  become: yes
+  gather_facts: yes
+  
+  vars:
+    zabbix_server_ip: "{{ zabbix_server | default('192.168.1.203') }}"
+    zabbix_version: "7.0"
+  
+  tasks:
+    - name: Detect OS Family
+      debug:
+        msg: "Installing Zabbix Agent on {{ ansible_distribution }} {{ ansible_distribution_version }}"
+
+    # Ubuntu/Debian Installation
+    - block:
+        - name: Install wget (Ubuntu/Debian)
+          apt:
+            name: wget
+            state: present
+            update_cache: yes
+
+        - name: Download Zabbix repository package
+          get_url:
+            url: "https://repo.zabbix.com/zabbix/{{ zabbix_version }}/ubuntu/pool/main/z/zabbix-release/zabbix-release_{{ zabbix_version }}-2+ubuntu{{ ansible_distribution_version }}_all.deb"
+            dest: /tmp/zabbix-release.deb
+            mode: '0644'
+          ignore_errors: yes
+
+        - name: Install Zabbix repository
+          apt:
+            deb: /tmp/zabbix-release.deb
+            state: present
+          when: ansible_facts['os_family'] == "Debian"
+          ignore_errors: yes
+
+        - name: Update apt cache
+          apt:
+            update_cache: yes
+
+        - name: Install Zabbix Agent 2
+          apt:
+            name: zabbix-agent2
+            state: present
+
+      when: ansible_facts['os_family'] == "Debian"
+
+    # RHEL/CentOS Installation
+    - block:
+        - name: Install Zabbix repository (RHEL/CentOS)
+          yum:
+            name: "https://repo.zabbix.com/zabbix/{{ zabbix_version }}/rhel/{{ ansible_distribution_major_version }}/x86_64/zabbix-release-{{ zabbix_version }}-1.el{{ ansible_distribution_major_version }}.noarch.rpm"
+            state: present
+
+        - name: Install Zabbix Agent 2 (RHEL/CentOS)
+          yum:
+            name: zabbix-agent2
+            state: present
+
+      when: ansible_facts['os_family'] == "RedHat"
+
+    # Configuration (Common for all OS)
+    - name: Backup original config
+      copy:
+        src: /etc/zabbix/zabbix_agent2.conf
+        dest: /etc/zabbix/zabbix_agent2.conf.bak
+        remote_src: yes
+        force: no
+
+    - name: Configure Zabbix Agent 2 - Server IP
+      lineinfile:
+        path: /etc/zabbix/zabbix_agent2.conf
+        regexp: '^Server='
+        line: "Server={{ zabbix_server_ip }}"
+        backup: yes
+
+    - name: Configure Zabbix Agent 2 - ServerActive IP
+      lineinfile:
+        path: /etc/zabbix/zabbix_agent2.conf
+        regexp: '^ServerActive='
+        line: "ServerActive={{ zabbix_server_ip }}"
+
+    - name: Configure Zabbix Agent 2 - Hostname
+      lineinfile:
+        path: /etc/zabbix/zabbix_agent2.conf
+        regexp: '^Hostname='
+        line: "Hostname={{ ansible_hostname }}"
+
+    - name: Configure Zabbix Agent 2 - HostMetadata for Auto-registration
+      lineinfile:
+        path: /etc/zabbix/zabbix_agent2.conf
+        regexp: '^# HostMetadata='
+        line: "HostMetadata=Linux"
+
+    - name: Start and enable Zabbix Agent 2
+      systemd:
+        name: zabbix-agent2
+        state: restarted
+        enabled: yes
+
+    - name: Verify Zabbix Agent 2 is running
+      systemd:
+        name: zabbix-agent2
+        state: started
+      register: zabbix_status
+
+    - name: Display status
+      debug:
+        msg: "Zabbix Agent installed and running on {{ ansible_hostname }} ({{ ansible_default_ipv4.address }})"

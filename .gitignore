@@ -1,13 +1,45 @@
 # Gitignore for Zabbix Monitoring
 
-# Secrets and sensitive data
+# ==========================================
+# CRITICAL: Sensitive Data & Credentials
+# ==========================================
+# Environment files with API keys and passwords
+.env
+.env.local
+.env.production
+.env.staging
+
+# Docker secrets
 env_vars/.*
 env_vars/.POSTGRES_*
 env_vars/.MYSQL_*
 env_vars/.env_srv
 !env_vars/.gitkeep
+!env_vars/README.md
 
-# Data directories
+# SSH Keys
+ssh-keys/*
+!ssh-keys/README.md
+*.pem
+*.key
+id_rsa*
+*.ppk
+
+# Ansible vault files
+ansible/vault_*
+ansible/**/*vault*
+*.vault
+
+# Ansible inventory with sensitive host data
+ansible/inventory/hosts.yml
+ansible/inventory/*.yml
+!ansible/inventory/hosts.yml.example
+!ansible/inventory/*.example.yml
+
+# ==========================================
+# Data Directories & Volumes
+# ==========================================
+# Persistent Zabbix data
 zbx_env/var/
 zbx_env/usr/
 zbx_env/backups/
@@ -16,27 +48,108 @@ zbx_env/postgres-data/
 # Docker volumes
 postgres-data/
 snmptraps/
+redis-data/
+ollama-data/
+open-webui-data/
+ansible-logs/
 
-# Logs
+# Database dumps
+*.sql
+*.sql.gz
+*.dump
+
+# ==========================================
+# Logs & Temporary Files
+# ==========================================
+# Log files
 *.log
 logs/
+/ansible/artifacts/
+*.log.*
 
 # Temporary files
 *.tmp
 *.swp
 *.swo
 *~
+*.cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
 
-# IDE
+# ==========================================
+# IDE & Editor Files
+# ==========================================
 .vscode/
 .idea/
 *.iml
+*.sublime-*
+.project
+.settings/
 
-# OS
+# ==========================================
+# OS Files
+# ==========================================
 .DS_Store
 Thumbs.db
+desktop.ini
+*.lnk
 
-# Backup files
+# ==========================================
+# Backup & Archive Files
+# ==========================================
 *.bak
 *.backup
 *.old
+*.orig
+*.save
+*.tar
+*.tar.gz
+*.zip
+
+# ==========================================
+# Python Virtual Environments
+# ==========================================
+venv/
+env/
+ENV/
+.venv/
+
+# ==========================================
+# Docker & Compose
+# ==========================================
+# Don't ignore docker-compose files, but ignore overrides with secrets
+docker-compose.override.yml
+.docker/
+
+# ==========================================
+# Test & Coverage
+# ==========================================
+.coverage
+htmlcov/
+.pytest_cache/
+.tox/
+*.cover
+coverage.xml
+
+# ==========================================
+# MacOS
+# ==========================================
+.AppleDouble
+.LSOverride
+._*
+
+# ==========================================
+# Linux
+# ==========================================
+.directory
+.Trash-*
+
+# ==========================================
+# Windows
+# ==========================================
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/

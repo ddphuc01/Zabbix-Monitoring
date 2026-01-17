@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Zabbix AI Webhook Handler - Gemini Integration
-Receives alerts from Zabbix and analyzes them using Google Gemini API
+Zabbix AI Webhook Handler - Groq & Ansible Integration
+Receives alerts from Zabbix, gathers system metrics via Ansible, and analyzes them using Groq API
 """
 
 import os
@@ -9,20 +9,26 @@ import sys
 import json
 import hashlib
 import time
+import subprocess
+import logging
 from datetime import datetime
 from flask import Flask, request, jsonify
-import google.generativeai as genai
+from groq import Groq
 import redis
-import logging
+import requests
 from functools import wraps
 
 # Configuration
-GEMINI_API_KEY = os.getenv('GEMINI_API_KEY', '')
+GROQ_API_KEY = os.getenv('GROQ_API_KEY', '')
 REDIS_HOST = os.getenv('REDIS_HOST', 'redis')
 REDIS_PORT = int(os.getenv('REDIS_PORT', 6379))
 CACHE_TTL = int(os.getenv('CACHE_TTL', 3600))
-MAX_TOKENS = int(os.getenv('MAX_TOKENS', 1000))
+MAX_TOKENS = int(os.getenv('MAX_TOKENS', 200))
 TEMPERATURE = float(os.getenv('TEMPERATURE', 0.3))
+
+# Ansible Configuration
+ANSIBLE_PLAYBOOK_PATH = "/home/phuc/zabbix-monitoring/ansible/playbooks/diagnostics/gather_system_metrics.yml"
+ANSIBLE_INVENTORY_PATH = "/home/phuc/zabbix-monitoring/ansible/inventory/hosts"
 
 # Initialize Flask
 app = Flask(__name__)
@@ -34,9 +40,12 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Initialize Gemini
-genai.configure(api_key=GEMINI_API_KEY)
-model = genai.GenerativeModel('models/gemini-flash-latest')  # Working model!
+# Initialize Groq
+try:
+    groq_client = Groq(api_key=GROQ_API_KEY)
+except Exception as e:
+    logger.error(f"❌ Failed to initialize Groq client: {e}")
+    groq_client = None
 
 # Initialize Redis
 try:
@@ -59,8 +68,8 @@ class CacheManager:
     @staticmethod
     def get_cache_key(alert_data):
         """Generate cache key from alert data"""
-        key_data = f"{alert_data.get('trigger', '')}{alert_data.get('severity', '')}"
-        return f"gemini:{hashlib.md5(key_data.encode()).hexdigest()}"
+        key_data = f"{alert_data.get('trigger', '')}{alert_data.get('severity', '')}{alert_data.get('host', '')}"
+        return f"groq:{hashlib.md5(key_data.encode()).hexdigest()}"
     
     @staticmethod
     def get(key):
@@ -87,139 +96,420 @@ class CacheManager:
         except Exception as e:
             logger.error(f"Cache set error: {e}")
 
-
-class GeminiAnalyzer:
-    """Analyze Zabbix alerts using Gemini API"""
+class AnsibleExecutor:
+    """Execute Ansible playbooks via REST API on host machine"""
     
-    SYSTEM_PROMPT = """Bạn là Senior SysAdmin chuyên Zabbix monitoring.
+    # API Configuration
+    ANSIBLE_API_URL = os.getenv('ANSIBLE_API_URL', 'http://host.docker.internal:5001')
+    API_TIMEOUT = int(os.getenv('ANSIBLE_API_TIMEOUT', 90))
 
-QUAN TRỌNG: 
-- Viết TIẾNG VIỆT ngắn gọn, TECHNICAL
-- Dùng thuật ngữ kỹ thuật (giữ nguyên tiếng Anh nếu quen thuộc)
-- Viết theo BULLET POINTS, KHÔNG phải đoạn văn dài
-- Đưa COMMANDS cụ thể, có thể chạy ngay
-- Straight to the point - NO fluff
-
-Khi phân tích alert:
-1. Tóm tắt vấn đề (1 câu)
-2. List nguyên nhân có thể (bullets)
-3. Commands để fix (copy-paste được)
-4. Cách prevent (bullets ngắn)
-
-Response format JSON (values bằng tiếng Việt):
-{
-  "summary": "Mô tả ngắn vấn đề - 1 câu",
-  "root_cause": "Nguyên nhân:\n- Khả năng 1\n- Khả năng 2\n- Khả năng 3",
-  "severity_assessment": "Mức độ (Cao/Trung bình/Thấp) - lý do ngắn",
-  "immediate_action": "Các bước fix:\n1. Command cụ thể hoặc hành động\n2. Command kế tiếp\n3. Verify",
-  "preventive_measures": "Phòng ngừa:\n- Action 1\n- Action 2",
-  "related_metrics": "Metrics cần check:\n- metric1\n- metric2",
-  "confidence": 0.0-1.0
-}
-
-Example style:
-❌ Không viết: "Máy chủ web sản xuất đang chịu tải CPU cực cao có nguy cơ gây ra độ trễ cao và sập dịch vụ"
-✅ Viết: "CPU quá cao (98%) - service có thể sập"
-
-❌ Không: "Nguyên nhân gốc rễ có khả năng nhất là một tiến trình ứng dụng bị lỗi"  
-✅ Viết: "Nguyên nhân:\n- Process bị leak\n- Traffic spike đột ngột\n- Resource limit thiếu"
-
-❌ Không: "Bạn nên thực hiện các bước sau để khắc phục"
-✅ Viết: "Fix ngay:\n1. ssh user@host\n2. top -n 1\n3. kill -9 <PID>"
-"""
-
-
-
-    
     @staticmethod
-    def build_alert_context(alert_data):
-        """Build context from alert data"""
-        context = f"""
-Alert Details:
-- Trigger: {alert_data.get('trigger', 'Unknown')}
-- Host: {alert_data.get('host', 'Unknown')}
-- Severity: {alert_data.get('severity', 'Unknown')}
-- Value: {alert_data.get('value', 'N/A')}
-- Time: {alert_data.get('time', 'N/A')}
-
-Description: {alert_data.get('description', 'No description')}
-
-Historical Context: {alert_data.get('history', 'No history available')}
-
-Please analyze this alert and provide recommendations.
-"""
-        return context
-    
-    @staticmethod
-    def analyze(alert_data):
-        """Analyze alert with Gemini"""
+    def run_diagnostics(hostname):
+        """Run diagnostics playbook via REST API"""
         try:
-            # Build prompt
-            user_prompt = GeminiAnalyzer.build_alert_context(alert_data)
-            full_prompt = f"{GeminiAnalyzer.SYSTEM_PROMPT}\n\n{user_prompt}"
+            api_endpoint = f"{AnsibleExecutor.ANSIBLE_API_URL}/api/v1/playbook/run"
             
-            # Call Gemini API
-            logger.info("🤖 Calling Gemini API...")
-            start_time = time.time()
+            payload = {
+                "playbook": "gather_system_metrics",
+                "target_host": hostname,
+                "extra_vars": {}
+            }
             
-            response = model.generate_content(
-                full_prompt,
-                generation_config=genai.types.GenerationConfig(
-                    max_output_tokens=MAX_TOKENS,
-                    temperature=TEMPERATURE,
-                )
+            logger.info(f"🚀 Calling Ansible API for {hostname}...")
+            logger.info(f"   Endpoint: {api_endpoint}")
+            
+            response = requests.post(
+                api_endpoint,
+                json=payload,
+                timeout=AnsibleExecutor.API_TIMEOUT
             )
             
-            elapsed = time.time() - start_time
-            logger.info(f"✅ Gemini responded in {elapsed:.2f}s")
+            if response.status_code != 200:
+                logger.error(f"❌ API returned status {response.status_code}: {response.text}")
+                return None
             
-            # Parse response
-            result = GeminiAnalyzer.parse_response(response.text, alert_data)
-            result['response_time'] = elapsed
-            result['model'] = 'gemini-flash-latest'
-            result['timestamp'] = datetime.utcnow().isoformat()
+            response_data = response.json()
             
-            return result
+            # Check execution status
+            if response_data.get('status') != 'success':
+                error_msg = response_data.get('error', 'Unknown error')
+                logger.error(f"❌ Ansible execution failed: {error_msg}")
+                return None
+            
+            # Extract result data
+            result_data = response_data.get('result', {})
+            logger.info(f"✅ Received diagnostics data from API")
+            
+            return result_data
+            
+        except requests.exceptions.Timeout:
+            logger.error(f"⏱️  API timeout after {AnsibleExecutor.API_TIMEOUT}s")
+            return None
+            
+        except requests.exceptions.ConnectionError as e:
+            logger.error(f"❌ Cannot connect to Ansible API: {e}")
+            logger.error(f"   Make sure API service is running on {AnsibleExecutor.ANSIBLE_API_URL}")
+            return None
             
         except Exception as e:
-            logger.error(f"❌ Gemini API error: {e}")
-            return {
-                "error": str(e),
-                "summary": "AI analysis failed",
-                "root_cause": "Unable to analyze - API error",
-                "immediate_action": "Please investigate manually",
-                "confidence": 0.0
-            }
+            logger.error(f"❌ Ansible API error: {e}")
+            return None
+
+
+class GroqAnalyzer:
+    """Analyze Zabbix alerts using Groq API"""
+    
+    SYSTEM_PROMPT = """Bạn là một System Administrator chuyên gia đang phân tích alert từ hệ thống Zabbix monitoring.
+- Đọc dữ liệu thực tế từ Ansible (top, ps, df, free, netstat)
+- Xác định nguyên nhân gốc (root cause)
+- Đưa ra khuyến nghị hành động cụ thể
+- Trả lời bằng Tiếng Việt, ngắn gọn, actionable
+- Mục tiêu: Giúp admin nhanh chóng xử lý sự cố
+
+### INPUT DATA FORMAT (từ Ansible)
+Bạn sẽ nhận:
+{
+  "alert_type": "CPU|MEMORY|DISK|NETWORK",
+  "hostname": "web-server-01",
+  "current_value": 85,
+  "threshold": 80,
+  "timestamp": "2024-01-15 14:30:00",
+  "ansible_output": {
+    "top": "...",          // top -b -n 1 output
+    "ps": "...",           // ps aux output
+    "df": "...",           // df -h output
+    "free": "...",         // free -h output
+    "netstat": "...",      // netstat -an output (nếu có)
+  },
+  "service_info": {
+    "environment": "production|staging|testing",
+    "app_type": "web|api|database|cache",
+    "expected_load": "normal|high|critical"
+  }
+}
+
+### ANALYSIS FRAMEWORK
+
+#### 1. ALERT TYPE: CPU
+**Phân tích:**
+- Kiểm tra top 3 process chiếm CPU cao nhất
+- So sánh với baseline bình thường
+- Kiểm tra context: spike tạm thời hay trend tăng?
+
+**Output format:**
+```
+🔴 [CRITICAL/HIGH/MEDIUM] CPU ALERT: {hostname}
+
+📊 Tình trạng: {current_value}% / {threshold}% ngưỡng
+
+⚡ Nguyên nhân chính:
+- [Process name] đang chiếm {X}% CPU
+- [Mô tả hành động của process]
+- [Lý do tại sao nó cao]
+
+✅ Khuyến nghị:
+1. [Hành động ngay lập tức - ví dụ: restart service, kill process]
+2. [Hành động dài hạn - ví dụ: scale up, optimize query]
+3. [Monitoring cần chú ý]
+
+⏱️ Urgency: [Restart now / Monitor 5min / Can wait]
+```
+
+#### 2. ALERT TYPE: MEMORY
+**Phân tích:**
+- Kiểm tra Used vs Available
+- Top 3 process sử dụng RAM cao nhất
+- Kiểm tra swap usage - nếu cao = vấn đề
+- Kiểm tra memory leak pattern
+
+**Output format:**
+```
+🔴 [CRITICAL/HIGH/MEDIUM] MEMORY ALERT: {hostname}
+
+📊 Tình trạng: {current_value}% / {threshold}%
+
+💾 Chi tiết:
+- Used: {X} GB / Total: {Y} GB
+- Swap: {swap_used}% (⚠️ nếu > 50%)
+- Available: {Z} GB
+
+⚡ Nguyên nhân chính:
+- [Process/Service] sử dụng {X} GB
+- [Mô tả vấn đề]
+
+✅ Khuyến nghị:
+1. [Immediate action]
+2. [Follow-up action]
+3. [Prevention measure]
+
+⏱️ Urgency: [Restart now / Monitor / Schedule maintenance]
+```
+
+#### 3. ALERT TYPE: DISK
+**Phân tích:**
+- Kiểm tra partition nào full
+- Top 3 thư mục chiếm space lớn nhất
+- Kiểm tra logs, cache, temp directories
+- Inode usage (nếu có) - nếu 100% = không ghi file được
+
+**Output format:**
+```
+🔴 [CRITICAL/HIGH/MEDIUM] DISK ALERT: {hostname}
+
+📊 Tình trạng: {current_value}% / {threshold}%
+
+💿 Chi tiết:
+- Partition: {partition_name}
+- Used: {X} GB / Total: {Y} GB
+- Inode: {inode_percent}% ⚠️
+
+⚡ Nguyên nhân chính:
+- Thư mục {path} chiếm {X} GB
+- [Mô tả: logs quá cũ, cache không clear, data không rotate]
+
+✅ Khuyến nghị:
+1. Xóa {path}/{file_pattern} (hoặc rotate logs)
+2. Kiểm tra {specific_service} configuration
+3. Thiết lập log rotation/cleanup policy
+
+⏱️ Urgency: [Delete now / Schedule cleanup / Monitor]
+```
+
+#### 4. ALERT TYPE: NETWORK
+**Phân tích:**
+- Kiểm tra connection count
+- Phát hiện connection state bất thường (ESTABLISHED, TIME_WAIT, SYN_RECV)
+- Port nào có traffic cao
+- Kiểm tra dropped packets (nếu có)
+
+**Output format:**
+```
+🔴 [CRITICAL/HIGH/MEDIUM] NETWORK ALERT: {hostname}
+
+📊 Tình trạng: {current_value}
+
+🌐 Chi tiết:
+- Tổng connection: {total}
+- ESTABLISHED: {established}
+- TIME_WAIT: {time_wait}
+- SYN_RECV: {syn_recv}
+
+⚡ Nguyên nhân chính:
+- Port {port} có {X} connection
+- [Mô tả: client không close connection, slow query, DDoS signal]
+
+✅ Khuyến nghị:
+1. Kiểm tra service lắng nghe port {port}
+2. Tăng connection limit nếu cần
+3. Thêm firewall rules nếu nhận DDoS
+
+⏱️ Urgency: [Check immediately / Increase limits / Monitor]
+```
+
+### SPECIAL CASES & RULES
+
+**Rule 1: Spike vs Trend**
+- Spike tạm thời (1-2 phút): "Monitor, có thể là traffic bình thường"
+- Trend tăng (> 10 phút): "Cần action ngay"
+
+**Rule 2: Correlation (nếu có nhiều alert cùng lúc)**
+- CPU cao + Memory cao + Disk I/O cao = Process quay vòng lặp / query kém
+- CPU cao + Network cao = Có thể DDoS hoặc malware
+- Memory cao + Disk I/O cao = Swap thrashing - rất nguy hiểm
+
+**Rule 3: Service-aware**
+- nginx/httpd CPU cao: Check slow queries, client connections
+- MySQL/PostgreSQL high memory: Nếu < 10min = query đột ngột, > 30min = memory leak
+- Redis memory: Clear expired keys, check LRU policy
+- Docker/Kubernetes: Kiểm tra container restart loop
+
+**Rule 4: Environment-aware**
+- Production: Severity cao hơn, recommend restart vào maintenance window
+- Staging: Có thể restart ngay
+- Testing: Có thể tạm thời ignore
+
+**Rule 5: False Positive Detection**
+- Nếu spike nhỏ (< 5% vượt threshold): "Có thể false positive, monitor thêm 5 phút"
+- Nếu baseline data không rõ: "Cần baseline hiểu rõ để xác định chính xác"
+
+### OUTPUT CONSTRAINTS
+- **Length**: 150-200 words (phù hợp Telegram message)
+- **Language**: Tiếng Việt, chuyên nghiệp nhưng dễ hiểu
+- **Tone**: Cấp báo nhưng không alarming
+- **Format**: Markdown (✅, ⚠️, 🔴, ⏱️ icons)
+- **Actionable**: User phải biết làm gì trong 30 giây
+
+### TONE GUIDELINES
+- Tin xấu ❌: Không dùng "server đang chết", dùng "cần action trong 5 phút"
+- Cấp độ: "Ngay lập tức" > "Trong 5 phút" > "Trong 1 giờ" > "Schedule maintenance"
+- Ích lợi: Luôn nêu lợi ích của action: "Restart sẽ clear cache, process sẽ chạy lại = system bình thường"
+
+### EXAMPLES
+
+**Example 1 - CPU Alert**
+Input: CPU 92%, nginx process 45%, apache 20%
+Output:
+```
+🔴 [HIGH] CPU ALERT: web-server-01
+
+📊 Tình trạng: 92% / 80%
+
+⚡ Nguyên nhân: nginx đang xử lý spike traffic (45% CPU)
+- Có ~500 connection từ client
+- Likely: API endpoint chậm, client đợi response
+
+✅ Khuyến nghị:
+1. Tăng worker processes của nginx từ 4 → 8 (tạm thời)
+2. Check slow query log nếu backend là PHP/Python
+3. Monitor 10 phút tiếp theo - nếu traffic hạ = OK, không cần restart
+
+⏱️ Urgency: Monitor 10 phút / Tối ưu configuration
+```
+
+**Example 2 - Disk Alert**
+Input: Disk 95%, /var/log chiếm 500GB
+Output:
+```
+🔴 [CRITICAL] DISK ALERT: app-server-01
+
+📊 Tình trạng: 95% / 80%
+
+💿 Chi tiết: /var/log = 500 GB (nguyên nhân chính!)
+- Logs cũ hơn 30 ngày không bị rotate
+- Có multiple large log files từ nginx, syslog, app logs
+
+✅ Khuyến nghị:
+1. **Ngay lập tức**: Chạy log rotation
+   `find /var/log -name "*.log.*" -mtime +30 | xargs rm`
+2. Kiểm tra logrotate config - ensure weekly rotation
+3. Thiết lập max log size = 100MB để auto rotate
+
+⏱️ Urgency: Delete now (an toàn, logs cũ có thể xóa)
+```
+"""
+
+    @staticmethod
+    def determine_alert_type(trigger_name):
+        """Determine alert type from trigger name"""
+        trigger_upper = trigger_name.upper()
+        if 'CPU' in trigger_upper or 'LOAD' in trigger_upper:
+            return 'CPU'
+        elif 'MEMORY' in trigger_upper or 'SWAP' in trigger_upper or 'RAM' in trigger_upper:
+            return 'MEMORY'
+        elif 'DISK' in trigger_upper or 'SPACE' in trigger_upper or 'VOLUME' in trigger_upper:
+            return 'DISK'
+        elif 'NETWORK' in trigger_upper or 'INTERFACE' in trigger_upper or 'BANDWIDTH' in trigger_upper:
+            return 'NETWORK'
+        return 'UNKNOWN'
     
     @staticmethod
-    def parse_response(text, alert_data):
-        """Parse Gemini response, handle both JSON and text"""
+    def extract_service_info(hostname, alert_data):
+        """Extract service context from hostname and alert data"""
+        # Default values
+        service_info = {
+            "environment": "production",
+            "app_type": "web",
+            "expected_load": "normal"
+        }
+        
+        # Try to determine environment from hostname
+        hostname_lower = hostname.lower()
+        if 'prod' in hostname_lower or 'prd' in hostname_lower:
+            service_info['environment'] = 'production'
+        elif 'staging' in hostname_lower or 'stg' in hostname_lower:
+            service_info['environment'] = 'staging'
+        elif 'test' in hostname_lower or 'dev' in hostname_lower:
+            service_info['environment'] = 'testing'
+        
+        # Try to determine app type from hostname
+        if 'web' in hostname_lower or 'nginx' in hostname_lower or 'apache' in hostname_lower:
+            service_info['app_type'] = 'web'
+        elif 'db' in hostname_lower or 'mysql' in hostname_lower or 'postgres' in hostname_lower:
+            service_info['app_type'] = 'database'
+        elif 'api' in hostname_lower:
+            service_info['app_type'] = 'api'
+        elif 'cache' in hostname_lower or 'redis' in hostname_lower:
+            service_info['app_type'] = 'cache'
+        
+        # Determine expected load based on severity
+        severity = str(alert_data.get('severity', '')).lower()
+        if 'critical' in severity or 'disaster' in severity:
+            service_info['expected_load'] = 'critical'
+        elif 'high' in severity or 'warning' in severity:
+            service_info['expected_load'] = 'high'
+        else:
+            service_info['expected_load'] = 'normal'
+        
+        return service_info
+
+    @staticmethod
+    def analyze(alert_data, ansible_data=None):
+        """Analyze alert with Groq"""
+        if not groq_client:
+             return {"error": "Groq client not initialized"}
+
         try:
-            # Try to extract JSON from markdown code blocks
-            if "```json" in text:
-                json_start = text.find("```json") + 7
-                json_end = text.find("```", json_start)
-                json_str = text[json_start:json_end].strip()
-                return json.loads(json_str)
-            elif "```" in text:
-                json_start = text.find("```") + 3
-                json_end = text.find("```", json_start)
-                json_str = text[json_start:json_end].strip()
-                return json.loads(json_str)
+            alert_type = GroqAnalyzer.determine_alert_type(alert_data.get('trigger', ''))
+            hostname = alert_data.get('host', 'Unknown')
+            
+            # Extract service context
+            service_info = GroqAnalyzer.extract_service_info(hostname, alert_data)
+            
+            # Prepare Ansible output - handle both dict and string
+            if isinstance(ansible_data, dict):
+                ansible_output = ansible_data
+            elif ansible_data:
+                ansible_output = {"raw": ansible_data}
             else:
-                # Try direct JSON parse
-                return json.loads(text)
-        except:
-            # Fallback: create structured response from text
+                ansible_output = "No Ansible data available (Execution failed or not configured)"
+            
+            # Construct user message
+            user_content = {
+                "alert_type": alert_type,
+                "hostname": hostname,
+                "current_value": alert_data.get('value', 'N/A'),
+                "threshold": alert_data.get('threshold', '80'),  # Default threshold
+                "timestamp": alert_data.get('time', datetime.utcnow().isoformat()),
+                "ansible_output": ansible_output,
+                "service_info": service_info
+            }
+            
+            logger.info(f"🤖 Calling Groq API for {alert_type} alert on {hostname} (env: {service_info['environment']})...")
+            start_time = time.time()
+            
+            completion = groq_client.chat.completions.create(
+                model="llama-3.3-70b-versatile",
+                messages=[
+                    {
+                        "role": "system",
+                        "content": GroqAnalyzer.SYSTEM_PROMPT
+                    },
+                    {
+                        "role": "user",
+                        "content": json.dumps(user_content)
+                    }
+                ],
+                max_tokens=MAX_TOKENS,
+                temperature=TEMPERATURE,
+                top_p=0.9,
+                frequency_penalty=0.5
+            )
+            
+            analysis_text = completion.choices[0].message.content
+            elapsed = time.time() - start_time
+            logger.info(f"✅ Groq responded in {elapsed:.2f}s")
+            
             return {
-                "summary": f"Analysis for {alert_data.get('trigger', 'alert')}",
-                "root_cause": text[:200],
-                "severity_assessment": alert_data.get('severity', 'Unknown'),
-                "immediate_action": text,
-                "preventive_measures": "Review analysis for recommendations",
-                "related_metrics": "Check related monitoring data",
-                "confidence": 0.7,
-                "note": "Response was not in expected JSON format"
+                "analysis": analysis_text,
+                "model": "llama-3.3-70b-versatile",
+                "timestamp": datetime.utcnow().isoformat()
+            }
+            
+        except Exception as e:
+            logger.error(f"❌ Groq API error: {e}")
+            return {
+                "error": str(e),
+                "analysis": "AI Analysis Failed due to API Error."
             }
 
 
@@ -227,9 +517,9 @@ def require_api_key(f):
     """Decorator to check API key"""
     @wraps(f)
     def decorated(*args, **kwargs):
-        if not GEMINI_API_KEY:
+        if not GROQ_API_KEY:
             return jsonify({
-                "error": "GEMINI_API_KEY not configured",
+                "error": "GROQ_API_KEY not configured",
                 "status": "error"
             }), 500
         return f(*args, **kwargs)
@@ -239,61 +529,13 @@ def require_api_key(f):
 @app.route('/health', methods=['GET'])
 def health():
     """Health check endpoint"""
-    status = {
+    return jsonify({
         "status": "healthy",
-        "service": "zabbix-ai-webhook",
+        "service": "zabbix-ai-webhook-groq",
         "timestamp": datetime.utcnow().isoformat(),
-        "gemini_configured": bool(GEMINI_API_KEY),
+        "groq_configured": bool(GROQ_API_KEY),
         "redis_connected": redis_client is not None
-    }
-    
-    # Test Redis
-    if redis_client:
-        try:
-            redis_client.ping()
-            status['redis_status'] = 'connected'
-        except:
-            status['redis_status'] = 'disconnected'
-            status['status'] = 'degraded'
-    
-    return jsonify(status), 200
-
-
-@app.route('/analyze', methods=['POST'])
-@require_api_key
-def analyze_alert():
-    """Main endpoint to analyze alerts"""
-    try:
-        # Parse request
-        alert_data = request.get_json()
-        if not alert_data:
-            return jsonify({"error": "No data provided"}), 400
-        
-        logger.info(f"📨 Received alert: {alert_data.get('trigger', 'Unknown')}")
-        
-        # Check cache
-        cache_key = CacheManager.get_cache_key(alert_data)
-        cached_result = CacheManager.get(cache_key)
-        
-        if cached_result:
-            cached_result['from_cache'] = True
-            return jsonify(cached_result), 200
-        
-        # Analyze with Gemini
-        result = GeminiAnalyzer.analyze(alert_data)
-        result['from_cache'] = False
-        
-        # Cache result
-        CacheManager.set(cache_key, result)
-        
-        return jsonify(result), 200
-        
-    except Exception as e:
-        logger.error(f"❌ Error in /analyze: {e}")
-        return jsonify({
-            "error": str(e),
-            "status": "error"
-        }), 500
+    }), 200
 
 
 @app.route('/webhook', methods=['POST'])
@@ -301,10 +543,9 @@ def analyze_alert():
 def webhook():
     """Zabbix webhook endpoint"""
     try:
-        # Zabbix sends different format
         data = request.get_json()
         
-        # Transform Zabbix webhook format to our format
+        # Standardize Zabbix Data
         alert_data = {
             'trigger': data.get('trigger_name', data.get('TRIGGER.NAME', 'Unknown')),
             'host': data.get('host_name', data.get('HOST.NAME', 'Unknown')),
@@ -315,63 +556,68 @@ def webhook():
             'event_id': data.get('event_id', data.get('EVENT.ID', ''))
         }
         
-        # Analyze
-        result = GeminiAnalyzer.analyze(alert_data)
+        logger.info(f"📨 Received alert: {alert_data['trigger']} for {alert_data['host']}")
         
-        # Format for Zabbix (plain text response)
-        response_text = f"""🤖 AI Analysis:
+        # Check cache first
+        cache_key = CacheManager.get_cache_key(alert_data)
+        cached_result = CacheManager.get(cache_key)
+        if cached_result:
+            return cached_result['analysis'], 200
 
-📊 Summary: {result.get('summary', 'N/A')}
-
-🔍 Root Cause: {result.get('root_cause', 'N/A')}
-
-⚡ Immediate Action:
-{result.get('immediate_action', 'No recommendations')}
-
-🛡️ Prevention:
-{result.get('preventive_measures', 'No preventive measures')}
-
-📈 Related Metrics: {result.get('related_metrics', 'N/A')}
-
-🎯 Confidence: {result.get('confidence', 0)*100:.0f}%
-"""
+        # Execute Ansible diagnostics
+        ansible_data = AnsibleExecutor.run_diagnostics(alert_data['host'])
         
-        return response_text, 200
+        # Analyze with Groq
+        result = GroqAnalyzer.analyze(alert_data, ansible_data)
+        
+        # Cache Result
+        if 'error' not in result:
+             CacheManager.set(cache_key, result)
+        
+        # Format message with alert name
+        alert_name = alert_data.get('trigger', 'Alert')
+        hostname = alert_data.get('host', 'Unknown')
+        message_with_header = f"**{alert_name}** on {hostname}\n\n{result['analysis']}"
+        
+        # Send to Telegram
+        send_telegram_alert(message_with_header)
+        
+        return result['analysis'], 200
+        
+        return result['analysis'], 200
         
     except Exception as e:
         logger.error(f"❌ Error in /webhook: {e}")
         return f"❌ AI Analysis Error: {str(e)}", 500
 
 
-@app.route('/stats', methods=['GET'])
-def stats():
-    """Get statistics"""
-    stats_data = {
-        "service": "zabbix-ai-webhook",
-        "uptime": time.time(),  # Would need to track actual uptime
-        "cache_enabled": redis_client is not None
-    }
+def send_telegram_alert(message):
+    """Send alert message to Telegram"""
+    token = os.getenv('TELEGRAM_BOT_TOKEN')
+    chat_id = os.getenv('TELEGRAM_CHAT_ID')
     
-    if redis_client:
-        try:
-            info = redis_client.info()
-            stats_data['redis'] = {
-                'connected_clients': info.get('connected_clients', 0),
-                'used_memory_human': info.get('used_memory_human', '0'),
-                'total_keys': redis_client.dbsize()
-            }
-        except:
-            pass
-    
-    return jsonify(stats_data), 200
+    if not token or not chat_id:
+        logger.warning("⚠️ Telegram credentials not configured, skipping notification")
+        return
+
+    try:
+        url = f"https://api.telegram.org/bot{token}/sendMessage"
+        payload = {
+            "chat_id": chat_id,
+            "text": message,
+            "parse_mode": "Markdown"
+        }
+        response = requests.post(url, json=payload, timeout=10)
+        if response.status_code == 200:
+            logger.info("✅ Sent Telegram notification")
+        else:
+            logger.error(f"❌ Failed to send Telegram: {response.text}")
+    except Exception as e:
+        logger.error(f"❌ Telegram send error: {e}")
 
 
 if __name__ == '__main__':
-    logger.info("🚀 Starting Zabbix AI Webhook Handler")
-    logger.info(f"   Redis: {REDIS_HOST}:{REDIS_PORT}")
-    logger.info(f"   Cache TTL: {CACHE_TTL}s")
-    logger.info(f"   Gemini configured: {bool(GEMINI_API_KEY)}")
-    
+    logger.info("🚀 Starting Zabbix AI Webhook Handler (Groq Edition)")
     app.run(
         host='0.0.0.0',
         port=5000,

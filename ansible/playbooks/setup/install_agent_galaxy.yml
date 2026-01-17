@@ -1,0 +1,16 @@
+---
+- name: Install Zabbix Agent 2 using Official Role
+  hosts: "{{ target_host | default('all') }}"
+  become: yes
+  gather_facts: yes
+  
+  vars:
+    zabbix_agent2_server: "{{ zabbix_server | default('192.168.1.203') }}"
+    zabbix_agent2_serveractive: "{{ zabbix_server | default('192.168.1.203') }}"
+    zabbix_agent2_hostname: "{{ ansible_fqdn }}"
+    zabbix_agent2_hostmetadata: "Linux"
+    zabbix_version: 7.0
+    zabbix_repo: zabbix
+  
+  roles:
+    - role: community.zabbix.zabbix_agent2

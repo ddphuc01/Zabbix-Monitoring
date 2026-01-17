@@ -1,0 +1,57 @@
+all:
+  children:
+    production:
+      hosts:
+        # Example:
+        # web-server-01:
+        #   ansible_host: 192.168.1.100
+        #   ansible_user: deploy
+        #   ansible_ssh_private_key_file: /path/to/ssh-keys/ansible_key
+        #   zabbix_hostid: '10001'
+    
+    staging:
+      hosts:
+        # Example:
+        # staging-server:
+        #   ansible_host: 192.168.1.50
+        #   ansible_user: ubuntu
+        #   zabbix_hostid: 'stg-001'
+    
+    monitoring:
+      hosts:
+        zabbix-server:
+          ansible_host: localhost
+          ansible_connection: local
+          zabbix_hostid: '10000'
+    
+    test:
+      hosts:
+        # Example:
+        # localhost:
+        #   ansible_host: 127.0.0.1
+        #   ansible_user: youruser
+        #   ansible_ssh_private_key_file: /root/.ssh/ansible_key
+        #   zabbix_hostid: test-001
+    
+    windows:
+      vars:
+        ansible_connection: winrm
+        ansible_winrm_transport: basic
+        ansible_winrm_server_cert_validation: ignore
+        ansible_port: 5985
+        ansible_become: false  # Windows doesn't support sudo
+      hosts:
+        # Example:
+        # win-server-01:
+        #   ansible_host: 192.168.1.200
+        #   ansible_user: Administrator
+        #   ansible_password: 'USE_VAULT_OR_ENV_VAR'
+        #   zabbix_hostid: win-001
+    
+    linux_hosts:
+      hosts:
+        # Example:
+        # host-192.168.1.100:
+        #   ansible_host: 192.168.1.100
+        #   ansible_user: root
+        #   ansible_ssh_private_key_file: /path/to/ssh-keys/ansible_key
