@@ -5,24 +5,39 @@
 </p>
 
 <p align="center">
-  <strong>Production-Ready Zabbix 7.4 LTS Monitoring Platform</strong><br/>
-  Complete Docker-based deployment with all components
+  <strong>Production-Ready Zabbix 7.4 LTS + AI Monitoring Platform</strong><br/>
+  Complete Docker-based deployment with AI-powered alert analysis<br/>
+  <a href="https://github.com/ddphuc01/Zabbix-Monitoring">🔗 GitHub Repository</a>
 </p>
+
+> **🔒 Security Notice:** This repository contains templates only. Actual credentials must be configured separately. See [SECURITY_SETUP.md](SECURITY_SETUP.md) for setup instructions.
 
 ---
 
 ## 📋 Overview
 
-This is a comprehensive, production-ready implementation of **Zabbix 7.4 LTS** monitoring system based on the official [Zabbix Docker repository](https://github.com/zabbix/zabbix-docker). It includes all core and advanced components configured for enterprise use.
+This is a comprehensive, production-ready implementation of **Zabbix 7.4 LTS** monitoring system with **AI-powered alert analysis**. Based on the official [Zabbix Docker repository](https://github.com/zabbix/zabbix-docker), it extends standard Zabbix with intelligent automation and interactive management.
 
-### ✨ Features
+### ✨ Key Features
 
-- **🖥️ Complete Monitoring Stack** - All Zabbix components included
+#### Core Monitoring
+- **🖥️ Complete Zabbix Stack** - All official components (Server, Web UI, Agent 2, Java Gateway, SNMP)
 - **🔒 Security First** - Secrets management, network isolation, encrypted connections
 - **📊 Production Ready** - Resource limits, health checks, automated backups
-- **🚀 Easy Deployment** - One-command installation with automated setup
-- **📈 Scalable Architecture** - Support for distributed monitoring with proxies
-- **🔧 Fully Automated** - Scripts for backup, restore, and health monitoring
+- **� Scalable Architecture** - Support for 1000+ hosts with distributed monitoring
+
+#### AI & Automation
+- **🤖 AI Alert Analysis** - Groq (Llama 3.3-70B) analyzes alerts with real system metrics
+- **� Interactive Telegram Bot** - Natural language queries, inline action buttons
+- **🔧 Automated Diagnostics** - Ansible gathers system data (CPU, memory, disk, network)
+- **🇻🇳 Vietnamese Support** - AI responses and reports in Vietnamese
+- **⚡ Smart Caching** - Redis caches AI responses (3600s TTL)
+
+#### Advanced Features
+- **� Automated Reports** - Daily/weekly summaries via Telegram & email
+- **🎛️ Role-Based Access** - Admin/Operator/Viewer permissions
+- **🪟 Windows Support** - WinRM-based monitoring and diagnostics
+- **🐧 Linux Automation** - SSH-based deployment and management
 
 ---
 
@@ -60,34 +75,39 @@ The system implements a microservices architecture with three isolated network l
 ### Prerequisites
 
 - Docker 20.10+ and Docker Compose 2.x
-- 4GB RAM minimum (8GB recommended)
+- 4GB RAM minimum (8GB recommended for AI services)
 - 20GB free disk space
 - Linux host (Ubuntu, Debian, CentOS, etc.)
 
-### Installation
+### Installation (5 Minutes)
 
 ```bash
-# Clone or download this repository
-cd /home/phuc/zabbix-monitoring
+# 1. Clone repository
+git clone https://github.com/ddphuc01/Zabbix-Monitoring.git
+cd Zabbix-Monitoring
 
-# Run the automated installer
+# 2. Configure credentials (REQUIRED!)
+cp .env.example .env
+nano .env  # Fill in your API keys (Telegram, Groq, etc.)
+
+# 3. Generate secrets
+./scripts/generate-secrets.sh
+
+# 4. Start all services
 ./scripts/init-setup.sh
 ```
 
-The installer will:
-1. ✅ Check prerequisites
-2. 🔐 Generate secure secrets
-3. 📁 Create directory structure
-4. 🐳 Pull Docker images
-5. 🚀 Start all services
-6. ✔️  Verify health status
+**� Detailed Instructions:** See [docs/INSTALLATION_GUIDE.md](docs/INSTALLATION_GUIDE.md) for step-by-step setup guide with screenshots.
 
-**Access Zabbix Web Interface:**
-- URL: `http://localhost:8080`
-- Username: `Admin`
-- Password: `zabbix`
+### Access Points
 
-> ⚠️ **IMPORTANT**: Change the default password after first login!
+- **Zabbix Web UI:** `http://localhost:8080` (Admin/zabbix)
+- **Open WebUI (Chat):** `http://localhost:3000`
+- **Ollama (Local LLM):** `http://localhost:11434`
+
+> ⚠️ **SECURITY:** Change default password immediately after first login!
+> 
+> ⚠️ **API KEYS:** You MUST configure Telegram Bot Token, Groq API key, and other credentials in `.env` before starting services. See [SECURITY_SETUP.md](SECURITY_SETUP.md).
 
 ---
 
@@ -242,11 +262,26 @@ Interactive script will:
 
 ## 📚 Documentation
 
-- **[Installation Guide](./docs/INSTALLATION.md)** - Step-by-step setup instructions
-- **[Architecture Overview](./docs/ARCHITECTURE.md)** - System design and components
-- **[Troubleshooting](./docs/TROUBLESHOOTING.md)** - Common issues and solutions
-- **[API Guide](./docs/API_GUIDE.md)** - Zabbix API usage examples
-- **[Best Practices](./docs/BEST_PRACTICES.md)** - Production recommendations
+### Getting Started
+- **[📖 Installation Guide](./docs/INSTALLATION_GUIDE.md)** - **START HERE!** Step-by-step setup (30-45 min)
+- **[🔒 Security Setup](./SECURITY_SETUP.md)** - Credentials & secrets configuration
+- **[🏗️ Architecture Overview](./docs/ARCHITECTURE.md)** - System design and components
+
+### AI Features
+- **[📱 Telegram Bot Quickstart](./docs/TELEGRAM_BOT_QUICKSTART.md)** - Interactive bot setup
+- **[🤖 AI Integration](./docs/AI_QUICKSTART.md)** - Groq/Gemini configuration
+- **[🧠 Qwen Local LLM](./docs/QWEN_QUICKSTART.md)** - Ollama setup guide
+- **[🔗 Zabbix Webhook](./docs/ZABBIX_WEBHOOK_SETUP.md)** - AI webhook configuration
+
+### Automation
+- **[⚙️ Ansible Integration](./docs/ANSIBLE_INTEGRATION.md)** - Automated diagnostics setup
+- **[🪟 Windows Deployment](./docs/WINDOWS_DEPLOYMENT.md)** - WinRM host onboarding
+
+### Reference
+- **[🔧 Troubleshooting](./docs/TROUBLESHOOTING.md)** - Common issues and solutions
+- **[📊 API Guide](./docs/API_GUIDE.md)** - Zabbix API usage examples
+- **[✅ Best Practices](./docs/BEST_PRACTICES.md)** - Production recommendations
+- **[📋 Zabbix Actions](./docs/ZABBIX_ACTION_CONFIG.md)** - Alert action configuration
 
 ---
 
