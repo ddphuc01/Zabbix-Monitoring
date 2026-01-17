@@ -111,7 +111,70 @@ nano .env  # Fill in your API keys (Telegram, Groq, etc.)
 
 ---
 
-## 📦 Components
+## 🏗️ System Architecture Comparison
+
+### Standard Zabbix vs AI-Enhanced
+
+| Feature | Standard Zabbix | This AI-Enhanced Setup |
+|---------|----------------|------------------------|
+| **Monitoring** | ✅ Core monitoring | ✅ Core monitoring |
+| **Alert Notifications** | ✅ Email/SMS | ✅ Email/SMS + **Telegram Bot** |
+| **Alert Analysis** | ❌ Manual | ✅ **AI-powered (Groq/Gemini)** |
+| **Diagnostics** | ❌ Manual SSH | ✅ **Automated via Ansible** |
+| **Interactive Control** | ❌ Web UI only | ✅ **Telegram commands + buttons** |
+| **Natural Language** | ❌ None | ✅ **Ask AI about system status** |
+| **Auto-Remediation** | ❌ Manual fixes | ✅ **One-click fixes via Telegram** |
+| **Reports** | ✅ Basic | ✅ Basic + **AI summaries (Vietnamese)** |
+| **Local LLM** | ❌ None | ✅ **Ollama + Qwen (offline capable)** |
+| **Chat Interface** | ❌ None | ✅ **Open WebUI for conversations** |
+
+### Architecture Overview
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                         🌐 User Interfaces                          │
+├─────────────────────────────────────────────────────────────────────┤
+│  Zabbix Web UI (8080)  │  Open WebUI (3000)  │  Telegram Bot       │
+└──────────┬──────────────┴─────────────────────┴─────────────┬───────┘
+           │                                                    │
+┌──────────▼────────────────────────────────────────────────────▼───────┐
+│                    🔧 Application Layer                               │
+├───────────────────────────────────────────────────────────────────────┤
+│                                                                       │
+│  ┌─────────────┐  ┌──────────────┐  ┌─────────────┐                │
+│  │   Zabbix    │  │  AI Webhook  │  │  Telegram   │                │
+│  │   Server    │  │   Handler    │  │     Bot     │                │
+│  │   (10051)   │  │   (5000)     │  │             │                │
+│  └──────┬──────┘  └──────┬───────┘  └──────┬──────┘                │
+│         │                │                  │                        │
+│  ┌──────▼──────┐  ┌─────▼──────┐  ┌───────▼────────┐              │
+│  │ Java Gateway│  │   Groq AI  │  │    Ansible     │              │
+│  │  Web Service│  │  Gemini AI │  │   Executor     │              │
+│  │  SNMP Traps │  │  Qwen (Local)│ │   (Diagnostics)│              │
+│  └─────────────┘  └────────────┘  └────────────────┘              │
+│                                                                       │
+└───────────────────────────────┬───────────────────────────────────────┘
+                                │
+┌───────────────────────────────▼───────────────────────────────────────┐
+│                    💾 Data Layer                                      │
+├───────────────────────────────────────────────────────────────────────┤
+│  PostgreSQL 17  │  Redis Cache  │  Ollama Models                      │
+│  (Metrics DB)   │  (AI Cache)   │  (Local LLM)                        │
+└───────────────────────────────────────────────────────────────────────┘
+                                │
+┌───────────────────────────────▼───────────────────────────────────────┐
+│                    🖥️ Monitored Infrastructure                       │
+├───────────────────────────────────────────────────────────────────────┤
+│  Linux Servers  │  Windows Servers  │  Docker Containers  │  Network  │
+│  (SSH/Agent)    │  (WinRM/Agent)    │  (Docker API)       │  (SNMP)   │
+└───────────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## 📦 Complete Component List
+
+### 🔵 Core Zabbix Components (7 services)
 
 | Component | Version | Purpose | Port |
 |-----------|---------|---------|------|
@@ -122,6 +185,31 @@ nano .env  # Fill in your API keys (Telegram, Groq, etc.)
 | **Java Gateway** | 7.4-alpine | JMX monitoring | 10052 |
 | **Web Service** | 7.4-alpine | PDF report generation | 10053 |
 | **SNMP Traps** | 7.4-alpine | Network device monitoring | 162/UDP |
+
+### 🤖 AI & Automation Services (6 services)
+
+| Component | Technology | Purpose | Port |
+|-----------|-----------|---------|------|
+| **AI Webhook Handler** | Python/Flask + Groq | Analyzes alerts with AI | 5000 |
+| **Telegram Bot** | python-telegram-bot 20.7 | Interactive alert management | - |
+| **Ansible Executor** | Ansible + Python | Automated diagnostics | - |
+| **Zabbix API Connector** | FastAPI | Bridge for Open WebUI | 8001 |
+| **Ollama** | Ollama + Qwen | Local LLM (offline capable) | 11434 |
+| **Open WebUI** | Open WebUI | Chat interface for AI | 3000 |
+| **Redis** | Redis 7-alpine | AI response caching | 6379 |
+
+**Total Services:** 13 Docker containers
+
+### 🔄 Data Flow
+
+1. **Alert Triggered** → Zabbix Server detects issue
+2. **Webhook Called** → AI Webhook Handler receives alert
+3. **Diagnostics Gathered** → Ansible Executor runs playbook on target host
+4. **AI Analysis** → Groq/Gemini analyzes metrics + context
+5. **Telegram Notification** → Bot sends message with inline buttons
+6. **User Interaction** → Admin clicks button (Fix/Diagnostic/Ack)
+7. **Auto-Remediation** → Ansible executes fix playbook
+8. **Alert Closed** → Zabbix updates status
 
 ---
 
