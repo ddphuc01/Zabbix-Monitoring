@@ -1,0 +1,87 @@
+---
+# Gather Windows System Metrics via WinRM
+# Usage: ansible-playbook gather_windows_metrics.yml -e "target_host=win-pc-129"
+
+- name: Gather Windows System Metrics
+  hosts: "{{ target_host | default('all') }}"
+  gather_facts: no
+  
+  tasks:
+    - name: Get CPU usage (5-second average)
+      win_shell: |
+        $cpu = Get-Counter '\Processor(_Total)\% Processor Time' | Select-Object -ExpandProperty CounterSamples | Select-Object -ExpandProperty CookedValue
+        [Math]::Round($cpu, 2)
+      register: cpu_usage
+      
+    - name: Get Memory usage
+      win_shell: |
+        $os = Get-WmiObject Win32_OperatingSystem
+        $totalMem = $os.TotalVisibleMemorySize
+        $freeMem = $os.FreePhysicalMemory
+        $usedMem = $totalMem - $freeMem
+        $percentUsed = [Math]::Round(($usedMem / $totalMem) * 100, 2)
+        Write-Output $percentUsed
+      register: memory_usage
+      
+    - name: Get Disk usage (C: drive)
+      win_shell: |
+        $disk = Get-WmiObject Win32_LogicalDisk -Filter "DeviceID='C:'"
+        $percentUsed = [Math]::Round((($disk.Size - $disk.FreeSpace) / $disk.Size) * 100, 2)
+        Write-Output $percentUsed
+      register: disk_usage
+      
+    - name: Get System uptime
+      win_shell: |
+        $os = Get-WmiObject Win32_OperatingSystem
+        $uptime = (Get-Date) - ($os.ConvertToDateTime($os.LastBootUpTime))
+        $days = $uptime.Days
+        $hours = $uptime.Hours
+        Write-Output "$days days, $hours hours"
+      register: uptime
+      
+    - name: Get detailed system info
+      win_shell: |
+        $os = Get-WmiObject Win32_OperatingSystem
+        $cpu = Get-WmiObject Win32_Processor
+        $disk = Get-WmiObject Win32_LogicalDisk -Filter "DeviceID='C:'"
+        
+        # Format output as JSON
+        @{
+          hostname = $env:COMPUTERNAME
+          os_name = $os.Caption
+          os_version = $os.Version
+          cpu_name = $cpu.Name
+          cpu_cores = $cpu.NumberOfCores
+          total_memory_gb = [Math]::Round($os.TotalVisibleMemorySize / 1MB, 2)
+          disk_size_gb = [Math]::Round($disk.Size / 1GB, 2)
+          disk_free_gb = [Math]::Round($disk.FreeSpace / 1GB, 2)
+        } | ConvertTo-Json
+      register: system_info
+    
+    - name: Set diagnostic facts
+      set_fact:
+        diagnostics:
+          cpu:
+            usage: "{{ cpu_usage.stdout | trim }}"
+          memory:
+            used_percent: "{{ memory_usage.stdout | trim }}"
+          disk:
+            used_percent: "{{ disk_usage.stdout | trim }}"
+          uptime: "{{ uptime.stdout | trim }}"
+          system: "{{ system_info.stdout | from_json }}"
+    
+    - name: Display results
+      debug:
+        msg: |
+          === Windows System Diagnostics ===
+          CPU Usage: {{ diagnostics.cpu.usage }}%
+          Memory Usage: {{ diagnostics.memory.used_percent }}%
+          Disk Usage (C:): {{ diagnostics.disk.used_percent }}%
+          Uptime: {{ diagnostics.uptime }}
+          
+          System Details:
+          - Hostname: {{ diagnostics.system.hostname }}
+          - OS: {{ diagnostics.system.os_name }} ({{ diagnostics.system.os_version }})
+          - CPU: {{ diagnostics.system.cpu_name }} ({{ diagnostics.system.cpu_cores }} cores)
+          - Total RAM: {{ diagnostics.system.total_memory_gb }} GB
+          - Disk Size: {{ diagnostics.system.disk_size_gb }} GB (Free: {{ diagnostics.system.disk_free_gb }} GB)

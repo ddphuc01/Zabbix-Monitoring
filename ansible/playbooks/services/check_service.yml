@@ -1,0 +1,44 @@
+---
+# Check Windows Service Status via WinRM
+# Usage: ansible-playbook check_service.yml -e "target_host=WIN-PC-129 service_name=Spooler"
+
+- name: Check Windows Service Status
+  hosts: "{{ target_host | default('all') }}"
+  gather_facts: no
+  
+  vars:
+    service_name: "{{ service_name | default('') }}"
+  
+  tasks:
+    - name: Validate service name provided
+      fail:
+        msg: "service_name variable is required"
+      when: service_name == ''
+    
+    - name: Get service information
+      win_service_info:
+        name: "{{ service_name }}"
+      register: service_info
+      
+    - name: Check if service exists
+      fail:
+        msg: "Service '{{ service_name }}' not found on {{ inventory_hostname }}"
+      when: service_info.services | length == 0
+    
+    - name: Display service status
+      debug:
+        msg: |
+          Service Name: {{ service_info.services[0].name }}
+          Display Name: {{ service_info.services[0].display_name }}
+          State: {{ service_info.services[0].state }}
+          Start Mode: {{ service_info.services[0].start_mode }}
+          Path: {{ service_info.services[0].path }}
+          
+    - name: Set status facts
+      set_fact:
+        service_result:
+          name: "{{ service_info.services[0].name }}"
+          display_name: "{{ service_info.services[0].display_name }}"
+          status: "{{ service_info.services[0].state }}"
+          start_mode: "{{ service_info.services[0].start_mode }}"
+          path: "{{ service_info.services[0].path }}"

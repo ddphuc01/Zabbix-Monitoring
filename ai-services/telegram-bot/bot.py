@@ -275,6 +275,33 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Parse callback data for alert actions
     parts = data.split(':')
     action = parts[0]
+    
+    # Handle webhook button actions (new format: action:hostname:service_name)
+    if action == 'restart_service':
+        hostname = parts[1] if len(parts) > 1 else 'Unknown'
+        service_name = parts[2] if len(parts) > 2 else 'Unknown'
+        
+        # Check authorization
+        authorized, msg = is_authorized(user_id, 'restart')
+        if not authorized:
+            await query.edit_message_text(f"🔒 {msg}")
+            return
+        
+        await execute_service_restart(query, hostname, service_name)
+        return
+    
+    elif action == 'check_service':
+        hostname = parts[1] if len(parts) > 1 else 'Unknown'
+        service_name = parts[2] if len(parts) > 2 else 'Unknown'
+        await check_service_status(query, hostname, service_name)
+        return
+    
+    elif action == 'diagnostics':
+        hostname = parts[1] if len(parts) > 1 else 'Unknown'
+        await execute_host_diagnostic(query, hostname)
+        return
+    
+    # Legacy format: action:event_id
     event_id = parts[1] if len(parts) > 1 else None
     
     if action == 'confirm_fix':
@@ -491,6 +518,233 @@ async def ignore_alert(query, event_id: str):
     """Suppress alert"""
     try:
         await query.edit_message_text(f"🔇 Alert #{event_id} suppressed.", parse_mode='HTML')
+    except Exception as e:
+        await query.edit_message_text(f"❌ Suppress failed: {str(e)}")
+
+async def execute_service_restart(query, hostname: str, service_name: str):
+    """Restart Windows/Linux service via Ansible"""
+    try:
+        await query.edit_message_text(
+            f"🔄 <b>Restarting service...</b>\n\n"
+            f"Host: <code>{hostname}</code>\n"
+            f"Service: <code>{service_name}</code>\n\n"
+            f"⏳ Please wait...",
+            parse_mode='HTML'
+        )
+        
+        # Call Ansible API to restart service
+        payload = {
+            "playbook": "restart_service",
+            "target_host": hostname,
+            "extra_vars": {
+                "service_name": service_name
+            }
+        }
+        
+        response = requests.post(
+            f"{ANSIBLE_API_URL}/api/v1/playbook/run",
+            json=payload,
+            timeout=60
+        )
+        
+        if response.status_code == 200:
+            result = response.json()
+            if result.get('status') == 'success':
+                await query.edit_message_text(
+                    f"✅ <b>Service Restarted Successfully</b>\n\n"
+                    f"Host: <code>{hostname}</code>\n"
+                    f"Service: <code>{service_name}</code>\n\n"
+                    f"<b>Status:</b> Running ✓\n"
+                    f"<b>Duration:</b> {result.get('duration', 'N/A')}s",
+                    parse_mode='HTML'
+                )
+            else:
+                error_msg = result.get('error', 'Unknown error')
+                await query.edit_message_text(
+                    f"❌ <b>Restart Failed</b>\n\n"
+                    f"Host: <code>{hostname}</code>\n"
+                    f"Service: <code>{service_name}</code>\n\n"
+                    f"Error: {error_msg}",
+                    parse_mode='HTML'
+                )
+        else:
+            await query.edit_message_text(
+                f"❌ <b>API Error</b>\n\n"
+                f"Status: {response.status_code}\n"
+                f"Response: {response.text[:200]}",
+                parse_mode='HTML'
+            )
+            
+    except requests.Timeout:
+        await query.edit_message_text(
+            f"⏱️ <b>Timeout</b>\n\n"
+            f"Ansible API took too long to respond.\n"
+            f"Service may still be restarting.",
+            parse_mode='HTML'
+        )
+    except Exception as e:
+        logger.error(f"Service restart error: {e}")
+        await query.edit_message_text(
+            f"❌ <b>Error</b>\n\n"
+            f"Failed to restart service: {str(e)}",
+            parse_mode='HTML'
+        )
+
+async def check_service_status(query, hostname: str, service_name: str):
+    """Check Windows/Linux service status via Ansible"""
+    try:
+        await query.edit_message_text(
+            f"📊 <b>Checking service status...</b>\n\n"
+            f"Host: <code>{hostname}</code>\n"
+            f"Service: <code>{service_name}</code>",
+            parse_mode='HTML'
+        )
+        
+        # Call Ansible API to check service
+        payload = {
+            "playbook": "check_service",
+            "target_host": hostname,
+            "extra_vars": {
+                "service_name": service_name
+            }
+        }
+        
+        response = requests.post(
+            f"{ANSIBLE_API_URL}/api/v1/playbook/run",
+            json=payload,
+            timeout=30
+        )
+        
+        if response.status_code == 200:
+            result = response.json()
+            if result.get('status') == 'success':
+                service_data = result.get('result', {})
+                status = service_data.get('status', 'unknown')
+                startup_type = service_data.get('start_mode', 'unknown')
+                
+                status_emoji = "✅" if status == "running" else "❌"
+                
+                # Add restart button if service is stopped
+                keyboard = []
+                if status != "running":
+                    keyboard.append([
+                        InlineKeyboardButton(
+                            "🔄 Start Service",
+                            callback_data=f"restart_service:{hostname}:{service_name}"
+                        )
+                    ])
+                reply_markup = InlineKeyboardMarkup(keyboard) if keyboard else None
+                
+                await query.edit_message_text(
+                    f"{status_emoji} <b>Service Status</b>\n\n"
+                    f"Host: <code>{hostname}</code>\n"
+                    f"Service: <code>{service_name}</code>\n\n"
+                    f"<b>Status:</b> {status.title()}\n"
+                    f"<b>Startup Type:</b> {startup_type.title()}",
+                    parse_mode='HTML',
+                    reply_markup=reply_markup
+                )
+            else:
+                await query.edit_message_text(
+                    f"❌ <b>Check Failed</b>\n\n"
+                    f"Could not retrieve service status.\n"
+                    f"Error: {result.get('error', 'Unknown')}",
+                    parse_mode='HTML'
+                )
+        else:
+            await query.edit_message_text(
+                f"❌ <b>API Error</b>\n\n"
+                f"Status: {response.status_code}",
+                parse_mode='HTML'
+            )
+            
+    except Exception as e:
+        logger.error(f"Service status check error: {e}")
+        await query.edit_message_text(
+            f"❌ <b>Error</b>\n\n"
+            f"Failed to check service: {str(e)}",
+            parse_mode='HTML'
+        )
+
+async def execute_host_diagnostic(query, hostname: str):
+    """Run full diagnostic on host via Ansible"""
+    try:
+        await query.edit_message_text(
+            f"🔍 <b>Running diagnostics...</b>\n\n"
+            f"Host: <code>{hostname}</code>\n\n"
+            f"⏳ Gathering system metrics...",
+            parse_mode='HTML'
+        )
+        
+        # Call Ansible API for diagnostics
+        payload = {
+            "playbook": "gather_system_metrics",
+            "target_host": hostname,
+            "extra_vars": {}
+        }
+        
+        response = requests.post(
+            f"{ANSIBLE_API_URL}/api/v1/playbook/run",
+            json=payload,
+            timeout=60
+        )
+        
+        if response.status_code == 200:
+            result = response.json()
+            if result.get('status') == 'success':
+                diag_data = result.get('result', {})
+                
+                # Format diagnostic results
+                cpu = diag_data.get('cpu', {}).get('usage', 'N/A')
+                memory = diag_data.get('memory', {}).get('used_percent', 'N/A')
+                disk = diag_data.get('disk', {}).get('used_percent', 'N/A')
+                uptime = diag_data.get('uptime', 'N/A')
+                
+                await query.edit_message_text(
+                    f"🔍 <b>Diagnostic Report</b>\n\n"
+                    f"Host: <code>{hostname}</code>\n\n"
+                    f"<b>System Metrics:</b>\n"
+                    f"• CPU: {cpu}%\n"
+                    f"• Memory: {memory}%\n"
+                    f"• Disk: {disk}%\n"
+                    f"• Uptime: {uptime}\n\n"
+                    f"<b>Status:</b> ✅ Diagnostic complete",
+                    parse_mode='HTML'
+                )
+            else:
+                error_msg = result.get('error', 'Unknown error')
+                await query.edit_message_text(
+                    f"❌ <b>Diagnostic Failed</b>\n\n"
+                    f"Host: <code>{hostname}</code>\n\n"
+                    f"<b>Error:</b> {error_msg}\n\n"
+                    f"<b>Note:</b> Current diagnostic playbook supports Linux hosts only. "
+                    f"Windows diagnostics coming soon!",
+                    parse_mode='HTML'
+                )
+        else:
+            # API returned error status
+            try:
+                error_data = response.json()
+                error_msg = error_data.get('error', f'HTTP {response.status_code}')
+            except:
+                error_msg = f'HTTP {response.status_code}'
+            
+            await query.edit_message_text(
+                f"❌ <b>API Error</b>\n\n"
+                f"Host: <code>{hostname}</code>\n\n"
+                f"<b>Status:</b> {response.status_code}\n"
+                f"<b>Error:</b> {error_msg}\n\n"
+                f"<i>Tip: This playbook may not support this host type</i>",
+                parse_mode='HTML'
+            )
+            
+    except Exception as e:
+        logger.error(f"Diagnostic error: {e}")
+        await query.edit_message_text(
+            f"❌ <b>Error</b>\n\n"
+            f"Failed to run diagnostic: {str(e)}",
+            parse_mode='HTML'
+        )
     except Exception as e:
         await query.edit_message_text(f"❌ Suppress failed: {str(e)}")
 

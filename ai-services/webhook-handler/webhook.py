@@ -22,9 +22,29 @@ from functools import wraps
 GROQ_API_KEY = os.getenv('GROQ_API_KEY', '')
 REDIS_HOST = os.getenv('REDIS_HOST', 'redis')
 REDIS_PORT = int(os.getenv('REDIS_PORT', 6379))
-CACHE_TTL = int(os.getenv('CACHE_TTL', 3600))
+CACHE_TTL = int(os.getenv('CACHE_TTL', 7200))  # Increased to 2 hours to reduce duplicate AI calls
 MAX_TOKENS = int(os.getenv('MAX_TOKENS', 200))
 TEMPERATURE = float(os.getenv('TEMPERATURE', 0.3))
+
+# Alert Filtering Configuration - Skip non-critical repetitive alerts
+IGNORED_SERVICES = [
+    'AppXSvc',  # AppX Deployment - auto-stops when not needed
+    'GoogleUpdater',  # Google auto-updater services  
+    'GoogleUpdaterInternal',
+    'GoogleUpdaterService',
+    'edgeupdate',  # Edge updater
+    'gupdate',  # Chrome updater
+    'RemoteRegistry',  # Usually disabled for security
+]
+
+IGNORED_DISK_PATHS = [
+    '/etc/hostname',
+    '/etc/hosts',
+    '/etc/resolv.conf',
+    '/etc/localtime', 
+    '/etc/timezone',
+    '/run/secrets',  # Docker secrets mount
+]
 
 # Ansible Configuration
 ANSIBLE_PLAYBOOK_PATH = "/home/phuc/zabbix-monitoring/ansible/playbooks/diagnostics/gather_system_metrics.yml"
@@ -60,6 +80,25 @@ try:
 except Exception as e:
     logger.warning(f"⚠️  Redis connection failed: {e}, caching disabled")
     redis_client = None
+
+
+def should_skip_alert(alert_data):
+    """Check if alert should be skipped to save API quota"""
+    trigger = alert_data.get('trigger', '')
+    
+    # Skip non-critical Windows services that flap frequently
+    for service in IGNORED_SERVICES:
+        if service.lower() in trigger.lower():
+            logger.info(f"⏭️  Skipping non-critical service alert: {service}")
+            return True
+    
+    # Skip Docker mount point disk alerts
+    for path in IGNORED_DISK_PATHS:
+        if path in trigger:
+            logger.info(f"⏭️  Skipping Docker mount disk alert: {path}")
+            return True
+    
+    return False
 
 
 class CacheManager:
@@ -99,8 +138,8 @@ class CacheManager:
 class AnsibleExecutor:
     """Execute Ansible playbooks via REST API on host machine"""
     
-    # API Configuration
-    ANSIBLE_API_URL = os.getenv('ANSIBLE_API_URL', 'http://host.docker.internal:5001')
+    # API Configuration - Updated to use ansible-executor service
+    ANSIBLE_API_URL = os.getenv('ANSIBLE_API_URL', 'http://ansible-executor:5001')
     API_TIMEOUT = int(os.getenv('ANSIBLE_API_TIMEOUT', 90))
 
     @staticmethod
@@ -159,12 +198,43 @@ class AnsibleExecutor:
 class GroqAnalyzer:
     """Analyze Zabbix alerts using Groq API"""
     
-    SYSTEM_PROMPT = """Bạn là một System Administrator chuyên gia đang phân tích alert từ hệ thống Zabbix monitoring.
-- Đọc dữ liệu thực tế từ Ansible (top, ps, df, free, netstat)
-- Xác định nguyên nhân gốc (root cause)
-- Đưa ra khuyến nghị hành động cụ thể
-- Trả lời bằng Tiếng Việt, ngắn gọn, actionable
-- Mục tiêu: Giúp admin nhanh chóng xử lý sự cố
+    SYSTEM_PROMPT = """Ban la System Administrator phan tich Zabbix alerts.
+
+INPUT: JSON voi alert_type, hostname, current_value, threshold, ansible_output, service_info
+
+NHIEM VU:
+1. Doc ansible_output (top, ps, df, free) de tim nguyen nhan
+2. Phan tich theo alert_type: CPU/MEMORY/DISK/NETWORK/SERVICE
+3. Dua khuyen nghi hanh dong cu the
+
+OUTPUT FORMAT (150-200 words, Tieng Viet, dung emoji):
+- Severity icon + Alert type + hostname
+- Tinh trang hien tai vs threshold
+- Nguyen nhan chinh
+- Khuyen nghi cu the (commands neu can)
+- Urgency level
+
+ALERT TYPES:
+
+CPU: Tim top 3 process tu ps aux, so voi baseline, phan biet spike vs trend
+
+MEMORY: Check Used/Available, top RAM processes, swap usage (>50% = nguy hiem), detect memory leak
+
+DISK: Partition nao full, top directories chiem space, check logs/cache/temp, inode usage
+
+NETWORK: Connection count, states (ESTABLISHED/TIME_WAIT/SYN_RECV), port nao traffic cao
+
+SERVICE: Service name, tai sao stop (crashed/disabled/manual), anh huong gi, cach start
+  - Critical (DB, Web): Start ngay
+  - System services: Co the doi
+  - Optional (RGB, bloatware): Ignore
+
+RULES:
+- Spike <5min: "Monitor them"
+- Trend >10min: "Action ngay"
+- Production: Recommend maintenance window
+- Staging/Testing: Restart ngay OK
+
 
 ### INPUT DATA FORMAT (từ Ansible)
 Bạn sẽ nhận:
@@ -306,6 +376,36 @@ Bạn sẽ nhận:
 ⏱️ Urgency: [Check immediately / Increase limits / Monitor]
 ```
 
+#### 5. ALERT TYPE: SERVICE (Windows/Linux Service Monitoring)
+**Phân tích:**
+- Service name và trạng thái (Running/Stopped)
+- Kiểm tra lý do service stop (auto-start disabled, crashed, manual stop)
+- Ảnh hưởng đến hệ thống
+- Service phụ thuộc (dependent services)
+
+**Output format:**
+```
+🔴 [CRITICAL/HIGH/MEDIUM] SERVICE ALERT: {hostname}
+
+📊 Tình trạng: Dịch vụ "{service_name}" đang stopped
+
+⚡ Nguyên nhân:
+- Service bị stop (manual hoặc crashed)
+- [Nếu critical service] Có thể ảnh hưởng đến: {dependent_features}
+
+✅ Khuyến nghị:
+1. **Start lại service:** `Start-Service "{service_name}"` (Windows) hoặc `systemctl start {service_name}` (Linux)
+2. Kiểm tra startup type: Nên đặt 'Automatic' nếu service này quan trọng
+3. [Nếu service liên tục stop] Kiểm tra Event Logs/journalctl để tìm lỗi
+
+⏱️ Urgency: [Start now / Monitor / Can ignore if non-critical]
+```
+
+**Service Classification:**
+- **Critical Services:** Database, Web Server, Application Server → Start ngay
+- **System Services:** Windows Update, Diagnostic services → Có thể đợi
+- **Optional Services:** RGB lighting, manufacturer bloatware → Có thể ignore
+
 ### SPECIAL CASES & RULES
 
 **Rule 1: Spike vs Trend**
@@ -400,6 +500,8 @@ Output:
             return 'DISK'
         elif 'NETWORK' in trigger_upper or 'INTERFACE' in trigger_upper or 'BANDWIDTH' in trigger_upper:
             return 'NETWORK'
+        elif 'SERVICE' in trigger_upper or 'NOT RUNNING' in trigger_upper or 'IS NOT RUNNING' in trigger_upper or 'STOPPED' in trigger_upper:
+            return 'SERVICE'
         return 'UNKNOWN'
     
     @staticmethod
@@ -558,6 +660,18 @@ def webhook():
         
         logger.info(f"📨 Received alert: {alert_data['trigger']} for {alert_data['host']}")
         
+        # Skip non-critical repetitive alerts to save quota
+        if should_skip_alert(alert_data):
+            logger.info(f"⏭️  Alert skipped (filtered): {alert_data['trigger']}")
+            # Still send to Telegram but without AI analysis
+            simple_message = f"⚪ **{alert_data['trigger']}**\n"
+            simple_message += f"🖥️ Host: `{alert_data['host']}`\n"
+            simple_message += f"⏰ Time: {alert_data['time']}\n"
+            simple_message += f"📊 Severity: {alert_data['severity']}\n\n"
+            simple_message += "_ℹ️ Alert filtered (non-critical service). AI analysis skipped to save quota._"
+            send_telegram_alert(simple_message, alert_data=alert_data)
+            return "Alert filtered", 200
+        
         # Check cache first
         cache_key = CacheManager.get_cache_key(alert_data)
         cached_result = CacheManager.get(cache_key)
@@ -574,15 +688,36 @@ def webhook():
         if 'error' not in result:
              CacheManager.set(cache_key, result)
         
-        # Format message with alert name
+        # Format message with metadata
         alert_name = alert_data.get('trigger', 'Alert')
         hostname = alert_data.get('host', 'Unknown')
-        message_with_header = f"**{alert_name}** on {hostname}\n\n{result['analysis']}"
+        severity = alert_data.get('severity', 'Unknown')
+        event_time = alert_data.get('time', 'N/A')
+        event_id = alert_data.get('event_id', '')
         
-        # Send to Telegram
-        send_telegram_alert(message_with_header)
+        # Severity emoji mapping
+        severity_emojis = {
+            'Disaster': '🔴',
+            'High': '🟠',
+            'Average': '🟡',
+            'Warning': '🟢',
+            'Information': '🔵'
+        }
+        severity_emoji = severity_emojis.get(severity, '⚪')
         
-        return result['analysis'], 200
+        # Build header with metadata
+        header = f"{severity_emoji} **{alert_name}**\n"
+        header += f"🖥️ Host: `{hostname}`\n"
+        header += f"⏰ Time: {event_time}\n"
+        header += f"📊 Severity: {severity}"
+        if event_id:
+            header += f" | ID: `{event_id}`"
+        header += "\n\n---\n\n"
+        
+        message_with_header = header + result['analysis']
+        
+        # Send to Telegram with interactive buttons
+        send_telegram_alert(message_with_header, alert_data=alert_data)
         
         return result['analysis'], 200
         
@@ -591,8 +726,8 @@ def webhook():
         return f"❌ AI Analysis Error: {str(e)}", 500
 
 
-def send_telegram_alert(message):
-    """Send alert message to Telegram"""
+def send_telegram_alert(message, alert_data=None):
+    """Send alert message to Telegram with inline keyboard buttons"""
     token = os.getenv('TELEGRAM_BOT_TOKEN')
     chat_id = os.getenv('TELEGRAM_CHAT_ID')
     
@@ -602,14 +737,56 @@ def send_telegram_alert(message):
 
     try:
         url = f"https://api.telegram.org/bot{token}/sendMessage"
+        
+        # Build inline keyboard with action buttons
+        keyboard = None
+        if alert_data:
+            hostname = alert_data.get('host', 'Unknown')
+            trigger_name = alert_data.get('trigger', '')
+            event_id = alert_data.get('event_id', '')
+            
+            # Determine alert type for appropriate buttons
+            alert_type = GroqAnalyzer.determine_alert_type(trigger_name)
+            
+            buttons = []
+            
+            # Service-specific buttons
+            if alert_type == 'SERVICE':
+                # Extract service name from trigger (e.g., "Service XYZ is not running")
+                service_name = trigger_name.split('"')[1] if '"' in trigger_name else 'Unknown'
+                buttons.append(
+                    [{"text": "🔄 Restart Service", "callback_data": f"restart_service:{hostname}:{service_name}"}]
+                )
+                buttons.append(
+                    [{"text": "📊 Check Status", "callback_data": f"check_service:{hostname}:{service_name}"}]
+                )
+            else:
+                # Generic diagnostic button for other alert types
+                buttons.append(
+                    [{"text": "🔍 Run Diagnostics", "callback_data": f"diagnostics:{hostname}"}]
+                )
+            
+            # Common buttons for all alerts
+            buttons.append([
+                {"text": "✅ Acknowledge", "callback_data": f"ack:{event_id}"},
+                {"text": "🔕 Ignore", "callback_data": f"ignore:{event_id}"}
+            ])
+            
+            keyboard = {"inline_keyboard": buttons}
+        
         payload = {
             "chat_id": chat_id,
             "text": message,
             "parse_mode": "Markdown"
         }
+        
+        # Add keyboard if available
+        if keyboard:
+            payload["reply_markup"] = keyboard
+        
         response = requests.post(url, json=payload, timeout=10)
         if response.status_code == 200:
-            logger.info("✅ Sent Telegram notification")
+            logger.info("✅ Sent Telegram notification with inline buttons")
         else:
             logger.error(f"❌ Failed to send Telegram: {response.text}")
     except Exception as e:

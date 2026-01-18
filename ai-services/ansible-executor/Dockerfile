@@ -20,6 +20,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy application files
 COPY ansible_executor.py .
 COPY diagnostic_analyzer.py .
+COPY api_server.py .
 
 # Create directories
 RUN mkdir -p /ansible /var/log/ansible /root/.ssh
@@ -32,9 +33,12 @@ ENV PYTHONUNBUFFERED=1
 ENV ANSIBLE_DIR=/ansible
 ENV ANSIBLE_HOST_KEY_CHECKING=False
 
-# Health check
-HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-    CMD python -c "print('OK')" || exit 1
+# Expose API port
+EXPOSE 5001
 
-# Default command - keep container running
-CMD ["sh", "-c", "echo 'Ansible Executor ready' && tail -f /dev/null"]
+# Health check - use API endpoint
+HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
+    CMD python -c "import requests; requests.get('http://localhost:5001/health', timeout=2)" || exit 1
+
+# Run Flask API server
+CMD ["python", "api_server.py"]

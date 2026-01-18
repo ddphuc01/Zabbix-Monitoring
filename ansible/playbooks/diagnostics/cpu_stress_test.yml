@@ -1,0 +1,80 @@
+---
+# CPU Stress Test for Windows
+# Usage: ansible-playbook cpu_stress_test.yml -e "target_host=win-pc-129 duration_minutes=8"
+
+- name: Run CPU Stress Test on Windows
+  hosts: "{{ target_host | default('all') }}"
+  gather_facts: no
+  
+  vars:
+    duration_minutes: "{{ duration_minutes | default(5) }}"
+  
+  tasks:
+    - name: Display stress test info
+      debug:
+        msg: "Starting CPU stress test on {{ inventory_hostname }} for {{ duration_minutes }} minutes"
+    
+    - name: Run CPU stress test using PowerShell
+      win_shell: |
+        # CPU Stress Test Script
+        $duration = {{ duration_minutes }}
+        $endTime = (Get-Date).AddMinutes($duration)
+        
+        Write-Host "=== CPU Stress Test Started ==="
+        Write-Host "Duration: $duration minutes"
+        Write-Host "End Time: $endTime"
+        Write-Host "CPU Cores: $env:NUMBER_OF_PROCESSORS"
+        Write-Host ""
+        
+        # Get number of cores
+        $cores = $env:NUMBER_OF_PROCESSORS
+        
+        # Create stress job for each core
+        $jobs = @()
+        for ($i = 1; $i -le $cores; $i++) {
+            $job = Start-Job -ScriptBlock {
+                param($endTime)
+                $result = 1
+                while ((Get-Date) -lt $endTime) {
+                    # Intensive math operations
+                    $result = 1
+                    for ($j = 1; $j -le 100000; $j++) {
+                        $result = $result * 1.0001
+                    }
+                }
+            } -ArgumentList $endTime
+            $jobs += $job
+            Write-Host "Started stress job $i (Job ID: $($job.Id))"
+        }
+        
+        Write-Host ""
+        Write-Host "All stress jobs started. CPU will be stressed for $duration minutes..."
+        Write-Host "Monitor CPU usage in Task Manager"
+        Write-Host ""
+        
+        # Wait for jobs to complete
+        $jobs | Wait-Job | Out-Null
+        
+        # Clean up jobs
+        $jobs | Remove-Job
+        
+        Write-Host "=== CPU Stress Test Completed ==="
+        Write-Host "Test ran for $duration minutes"
+        Write-Host "All cores have been released"
+      register: stress_result
+      async: 600  # Allow up to 10 minutes
+      poll: 30     # Check every 30 seconds
+    
+    - name: Display stress test output
+      debug:
+        var: stress_result.stdout_lines
+    
+    - name: Get CPU usage after test
+      win_shell: |
+        $cpu = Get-Counter '\Processor(_Total)\% Processor Time' | Select-Object -ExpandProperty CounterSamples | Select-Object -ExpandProperty CookedValue
+        Write-Output "Current CPU usage after test: $([Math]::Round($cpu, 2))%"
+      register: cpu_after
+    
+    - name: Display final CPU usage
+      debug:
+        msg: "{{ cpu_after.stdout | trim }}"

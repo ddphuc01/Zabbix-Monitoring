@@ -374,7 +374,9 @@ services:
     ports:
       - "5000:5000"
     environment:
-      GEMINI_API_KEY: "${GEMINI_API_KEY}"
+      GROQ_API_KEY: "${GROQ_API_KEY}"
+      TELEGRAM_BOT_TOKEN: "${TELEGRAM_BOT_TOKEN}"
+      TELEGRAM_CHAT_ID: "${TELEGRAM_CHAT_ID}"
       REDIS_HOST: redis
       REDIS_PORT: 6379
       CACHE_TTL: 3600
@@ -456,95 +458,98 @@ services:
       com.zabbix.component: "ansible-executor"
 
   # ========================================
-  # Ollama (Local LLM with Qwen)
+  # Ollama (Local LLM with Qwen) - DEPRECATED 2026-01-18
+  # Replaced by Groq API for better performance
   # ========================================
-  ollama:
-    image: ollama/ollama:latest
-    container_name: zabbix-ollama
-    restart: "${RESTART_POLICY}"
-    ports:
-      - "11434:11434"
-    volumes:
-      - ollama-data:/root/.ollama
-    networks:
-      - backend
-    deploy:
-      resources:
-        limits:
-          cpus: '4.0'
-          memory: 8G
-        reservations:
-          cpus: '1.0'
-          memory: 2G
-    labels:
-      com.zabbix.description: "Ollama local LLM server with Qwen model"
-      com.zabbix.component: "ollama"
+  # ollama:
+  #   image: ollama/ollama:latest
+  #   container_name: zabbix-ollama
+  #   restart: "${RESTART_POLICY}"
+  #   ports:
+  #     - "11434:11434"
+  #   volumes:
+  #     - ollama-data:/root/.ollama
+  #   networks:
+  #     - backend
+  #   deploy:
+  #     resources:
+  #       limits:
+  #         cpus: '4.0'
+  #         memory: 8G
+  #       reservations:
+  #         cpus: '1.0'
+  #         memory: 2G
+  #   labels:
+  #     com.zabbix.description: "Ollama local LLM server with Qwen model"
+  #     com.zabbix.component: "ollama"
 
   # ========================================
-  # Open WebUI (Chat Interface)
+  # Open WebUI (Chat Interface) - DEPRECATED 2026-01-18
+  # Was used with Ollama, no longer needed with Groq API
   # ========================================
-  open-webui:
-    image: ghcr.io/open-webui/open-webui:main
-    container_name: zabbix-chat-ui
-    restart: "${RESTART_POLICY}"
-    ports:
-      - "3000:8080"
-    environment:
-      - OLLAMA_BASE_URL=http://ollama:11434
-      - WEBUI_NAME=Zabbix AI Assistant
-      - WEBUI_SECRET_KEY=${WEBUI_SECRET_KEY}
-      - ENABLE_SIGNUP=false
-      - DEFAULT_USER_ROLE=user
-      - ENABLE_API_KEY=true
-    volumes:
-      - open-webui-data:/app/backend/data
-    networks:
-      - backend
-    depends_on:
-      - ollama
-    deploy:
-      resources:
-        limits:
-          cpus: '1.0'
-          memory: 1G
-        reservations:
-          cpus: '0.25'
-          memory: 256M
-    labels:
-      com.zabbix.description: "Open WebUI chat interface for Zabbix"
-      com.zabbix.component: "chat-ui"
+  # open-webui:
+  #   image: ghcr.io/open-webui/open-webui:main
+  #   container_name: zabbix-chat-ui
+  #   restart: "${RESTART_POLICY}"
+  #   ports:
+  #     - "3000:8080"
+  #   environment:
+  #     - OLLAMA_BASE_URL=http://ollama:11434
+  #     - WEBUI_NAME=Zabbix AI Assistant
+  #     - WEBUI_SECRET_KEY=${WEBUI_SECRET_KEY}
+  #     - ENABLE_SIGNUP=false
+  #     - DEFAULT_USER_ROLE=user
+  #     - ENABLE_API_KEY=true
+  #   volumes:
+  #     - open-webui-data:/app/backend/data
+  #   networks:
+  #     - backend
+  #   depends_on:
+  #     - ollama
+  #   deploy:
+  #     resources:
+  #       limits:
+  #         cpus: '1.0'
+  #         memory: 1G
+  #       reservations:
+  #         cpus: '0.25'
+  #         memory: 256M
+  #   labels:
+  #     com.zabbix.description: "Open WebUI chat interface for Zabbix"
+  #     com.zabbix.component: "chat-ui"
 
   # ========================================
-  # Zabbix API Connector
+  # Zabbix API Connector - DEPRECATED 2026-01-18
+  # Was bridge for Open WebUI, no longer needed
   # ========================================
-  zabbix-api-connector:
-    build:
-      context: ./ai-services/zabbix-connector
-      dockerfile: Dockerfile
-    container_name: zabbix-api-connector
-    restart: "${RESTART_POLICY}"
-    ports:
-      - "8001:8000"
-    environment:
-      ZABBIX_API_URL: "http://zabbix-web:8080/api_jsonrpc.php"
-      ZABBIX_USER: "${ZABBIX_API_USER}"
-      ZABBIX_PASSWORD: "${ZABBIX_API_PASSWORD}"
-    networks:
-      - backend
-    depends_on:
-      zabbix-web-nginx:
-        condition: service_healthy
-    deploy:
-      resources:
-        limits:
-          cpus: '0.5'
-          memory: 512M
-        reservations:
-          cpus: '0.1'
-          memory: 128M
-    labels:
-      com.zabbix.description: "Zabbix API connector for Open WebUI"
-      com.zabbix.component: "api-connector"
+  # zabbix-api-connector:
+  #   build:
+  #     context: ./ai-services/zabbix-connector
+  #     dockerfile: Dockerfile
+  #   container_name: zabbix-api-connector
+  #   restart: "${RESTART_POLICY}"
+  #   ports:
+  #     - "8001:8000"
+  #   environment:
+  #     ZABBIX_API_URL: "http://zabbix-web:8080/api_jsonrpc.php"
+  #     ZABBIX_USER: "${ZABBIX_API_USER}"
+  #     ZABBIX_PASSWORD: "${ZABBIX_API_PASSWORD}"
+  #   networks:
+  #     - backend
+  #   depends_on:
+  #     zabbix-web-nginx:
+  #       condition: service_healthy
+  #   deploy:
+  #     resources:
+  #       limits:
+  #         cpus: '0.5'
+  #         memory: 512M
+  #       reservations:
+  #         cpus: '0.1'
+  #         memory: 128M
+  #   labels:
+  #     com.zabbix.description: "Zabbix API connector for Open WebUI"
+  #     com.zabbix.component: "api-connector"
 
 
 # ========================================

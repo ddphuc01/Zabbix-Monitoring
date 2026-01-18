@@ -1,0 +1,53 @@
+---
+# CPU Stress Test Playbook for Windows
+# Usage: ansible-playbook stress_test_cpu.yml -e "target_host=win-pc-129 duration_minutes=10"
+
+- name: Run CPU Stress Test on Windows Host
+  hosts: "{{ target_host | default('all') }}"
+  gather_facts: no
+  
+  vars:
+    duration_minutes: "{{ duration_minutes | default(5) }}"
+  
+  tasks:
+    - name: Display stress test parameters
+      debug:
+        msg: 
+          - "Starting CPU stress test on {{ inventory_hostname }}"
+          - "Duration: {{ duration_minutes }} minutes"
+    
+    - name: Run CPU stress test
+      win_shell: |
+        Write-Host "=== CPU STRESS TEST ===" -ForegroundColor Cyan
+        Write-Host "Duration: {{ duration_minutes }} minutes" -ForegroundColor Yellow
+        Write-Host "Start time: $(Get-Date -Format 'HH:mm:ss')" -ForegroundColor Yellow
+        
+        $endTime = (Get-Date).AddMinutes({{ duration_minutes }})
+        $iteration = 0
+        
+        while ((Get-Date) -lt $endTime) {
+            # CPU-intensive calculation
+            $result = 1
+            for ($i = 0; $i -lt 1000000; $i++) { 
+                $result = $result * 1.0001 
+            }
+            
+            $iteration++
+            if ($iteration % 10 -eq 0) {
+                $remaining = ($endTime - (Get-Date)).TotalMinutes
+                Write-Host "Progress: $([math]::Round($remaining, 1)) minutes remaining" -ForegroundColor Green
+            }
+        }
+        
+        Write-Host ""
+        Write-Host "=== STRESS TEST COMPLETE ===" -ForegroundColor Cyan
+        Write-Host "End time: $(Get-Date -Format 'HH:mm:ss')" -ForegroundColor Yellow
+      async: "{{ (duration_minutes | int + 1) * 60 }}"  # Add 1 minute buffer
+      poll: 30  # Check status every 30 seconds
+      register: stress_test_result
+    
+    - name: Display stress test completion
+      debug:
+        msg:
+          - "Stress test completed successfully"
+          - "{{ stress_test_result.stdout }}"
