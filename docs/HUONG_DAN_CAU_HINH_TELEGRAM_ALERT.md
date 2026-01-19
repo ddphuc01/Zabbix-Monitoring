@@ -154,7 +154,11 @@ Password: zabbix  (hoặc password bạn đã đổi)
 Administration → Media types → Create media type
 ```
 
+![Danh sách Media Types](file:///home/phuc/zabbix-monitoring/docs/images/telegram-alert-config/02-media-types-list.png)
+
 **Bước 2:** Điền thông tin:
+
+![Form Create Media Type](file:///home/phuc/zabbix-monitoring/docs/images/telegram-alert-config/03-create-media-type-form.png)
 
 | Field | Value |
 |-------|-------|
@@ -232,6 +236,8 @@ Administration → Users
 
 **Bước 6:** Click **Add**, rồi **Update** ở cuối trang
 
+![Tab Media của User Admin](file:///home/phuc/zabbix-monitoring/docs/images/telegram-alert-config/04-user-media-tab.png)
+
 ---
 
 ## 5. Cấu Hình Actions
@@ -275,6 +281,8 @@ Configuration → Actions → Trigger actions
 | **Send only to** | `AI Webhook (Groq)` |
 
 **Bước 3:** Click **Add** (trong popup), rồi **Add** (ở cuối form)
+
+![Danh sách Actions đã cấu hình](file:///home/phuc/zabbix-monitoring/docs/images/telegram-alert-config/05-actions-list.png)
 
 ---
 
@@ -362,6 +370,8 @@ docker exec zabbix-server zabbix_sender \
 ```
 
 **Bước 4:** Kiểm tra:
+
+![Monitoring Problems - Alerts đang active](file:///home/phuc/zabbix-monitoring/docs/images/telegram-alert-config/06-monitoring-problems.png)
 
 1. **Zabbix UI** → `Monitoring → Problems` - Phải thấy alert mới
 2. **Zabbix UI** → `Reports → Action log` - Phải thấy webhook được gọi
