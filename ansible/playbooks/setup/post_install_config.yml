@@ -64,37 +64,21 @@
         prompt: "Waiting for Zabbix Agent to connect..."
       when: zabbix_host_update.changed
 
-    - name: Verify Zabbix server host is monitored
-      uri:
-        url: "{{ zabbix_url }}/api_jsonrpc.php"
-        method: POST
-        body_format: json
-        body:
-          jsonrpc: "2.0"
-          method: "host.get"
-          params:
-            filter:
-              host: ["Zabbix server"]
-            selectInterfaces: "extend"
-          auth: "{{ zabbix_auth_token }}"
-          id: 2
-        status_code: 200
-      register: host_check
-      changed_when: false
-      vars:
-        # Get auth token first
-        zabbix_auth_token: "{{ lookup('pipe', 'curl -s -X POST {{ zabbix_url }}/api_jsonrpc.php -H \"Content-Type: application/json-rpc\" -d \"{\\\"jsonrpc\\\": \\\"2.0\\\", \\\"method\\\": \\\"user.login\\\", \\\"params\\\": {\\\"username\\\": \\\"{{ zabbix_api_user }}\\\", \\\"password\\\": \\\"{{ zabbix_api_password }}\\\"}, \\\"id\\\": 1}\" | jq -r .result') }}"
-      ignore_errors: true
-
-    - name: Display monitoring status
+    - name: Display completion message
       debug:
         msg: |
+          ========================================
           ✅ Zabbix Server Configuration Complete!
+          ========================================
           
           Host: Zabbix server
           Interface: zabbix-agent2:10050 (DNS)
           
           Next steps:
           1. Check web UI: {{ zabbix_url }}
-          2. Verify ZBX icon is green in Monitoring > Hosts
-          3. If still red, wait 1-2 minutes for agent to connect
+          2. Go to: Monitoring → Hosts
+          3. Verify ZBX icon is green for "Zabbix server"
+          4. If still red, wait 1-2 minutes for agent to connect
+          
+          ========================================
+

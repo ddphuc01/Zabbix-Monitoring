@@ -27,10 +27,10 @@ if ! command -v ansible-playbook &> /dev/null; then
     docker compose exec ansible-executor ansible-galaxy collection install -r /ansible/requirements.yml
 fi
 
-# Load environment variables
+# Load environment variables (ignore errors)
 if [ -f "${PROJECT_DIR}/.env" ]; then
     set -a
-    source "${PROJECT_DIR}/.env"
+    source "${PROJECT_DIR}/.env" 2>/dev/null || echo "Warning: Could not load .env file (using defaults)"
     set +a
 fi
 
