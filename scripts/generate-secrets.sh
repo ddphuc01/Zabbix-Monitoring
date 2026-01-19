@@ -106,7 +106,7 @@ ZBX_MAXHOUSEKEEPERDELETE=5000
 # ZBX_TLSCERTFILE=/var/lib/zabbix/ssl/certs/zabbix_server.crt
 # ZBX_TLSKEYFILE=/var/lib/zabbix/ssl/keys/zabbix_server.key
 EOF
-    chmod 600 "${ENV_SRV_FILE}"
+    chmod 644 "${ENV_SRV_FILE}"
     echo -e "${GREEN}✓  Created .env_srv${NC}"
 fi
 
@@ -115,7 +115,7 @@ echo -e "${GREEN}========================================${NC}"
 echo -e "${GREEN}Secrets Generation Complete!${NC}"
 echo -e "${GREEN}========================================${NC}"
 echo ""
-echo -e "${YELLOW}Important: All secret files have been created with 600 permissions.${NC}"
+echo -e "${YELLOW}Important: Secret files created with appropriate permissions.${NC}"
 echo -e "${YELLOW}They are stored in: ${ENV_VARS_DIR}${NC}"
 echo ""
 echo -e "${RED}⚠  SECURITY WARNING: Keep these files secure and never commit to version control!${NC}"
