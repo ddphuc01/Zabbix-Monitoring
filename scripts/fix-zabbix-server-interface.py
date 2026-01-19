@@ -26,7 +26,7 @@ class ZabbixAPI:
         self.auth_token = None
         self.request_id = 1
         
-    def call(self, method, params=None):
+    def call(self, method, params=None, include_auth=True):
         """Make a Zabbix API call"""
         headers = {'Content-Type': 'application/json-rpc'}
         
@@ -37,7 +37,8 @@ class ZabbixAPI:
             "id": self.request_id,
         }
         
-        if self.auth_token:
+        # Only include auth token for methods that need it (not user.login)
+        if self.auth_token and include_auth and method != "user.login":
             payload["auth"] = self.auth_token
             
         self.request_id += 1
@@ -60,7 +61,7 @@ class ZabbixAPI:
         result = self.call("user.login", {
             "username": self.user,
             "password": self.password
-        })
+        }, include_auth=False)
         self.auth_token = result
         print("✅ Login successful!")
         return result
