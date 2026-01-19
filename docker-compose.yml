@@ -436,7 +436,7 @@ services:
       REDIS_HOST: redis
       REDIS_PORT: 6379
       DIAGNOSTIC_TIMEOUT: 60
-      GEMINI_API_KEY: "${GEMINI_API_KEY}"
+      # GEMINI_API_KEY: "${GEMINI_API_KEY}"  # Deprecated - no longer used
     volumes:
       - ./ansible:/ansible:ro
       - ./ssh-keys:/root/.ssh:ro
