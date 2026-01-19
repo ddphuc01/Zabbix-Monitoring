@@ -2,12 +2,12 @@
 """
 Fix Zabbix Server Host Interface
 Automatically updates the "Zabbix server" host interface from 127.0.0.1 to zabbix-agent2 container
+Compatible with Zabbix 7.x (session-based authentication)
 """
 
 import os
 import sys
 import requests
-from requests.auth import HTTPBasicAuth
 import json
 
 # Configuration
@@ -23,11 +23,11 @@ class ZabbixAPI:
         self.url = url
         self.user = user
         self.password = password
-        self.auth_token = None
+        self.session = requests.Session()
         self.request_id = 1
         
-    def call(self, method, params=None, include_auth=True):
-        """Make a Zabbix API call"""
+    def call(self, method, params=None):
+        """Make a Zabbix API call using session"""
         headers = {'Content-Type': 'application/json-rpc'}
         
         payload = {
@@ -36,15 +36,11 @@ class ZabbixAPI:
             "params": params or {},
             "id": self.request_id,
         }
-        
-        # Only include auth token for methods that need it (not user.login)
-        if self.auth_token and include_auth and method != "user.login":
-            payload["auth"] = self.auth_token
             
         self.request_id += 1
         
         try:
-            response = requests.post(self.url, json=payload, headers=headers, timeout=10)
+            response = self.session.post(self.url, json=payload, headers=headers, timeout=10)
             response.raise_for_status()
             result = response.json()
             
@@ -61,8 +57,8 @@ class ZabbixAPI:
         result = self.call("user.login", {
             "username": self.user,
             "password": self.password
-        }, include_auth=False)
-        self.auth_token = result
+        })
+        # In Zabbix 7.x, the session cookie is automatically set by requests.Session
         print("✅ Login successful!")
         return result
     
