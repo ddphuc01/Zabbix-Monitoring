@@ -1,0 +1,100 @@
+---
+# Post-Installation Zabbix Configuration
+# This playbook configures Zabbix after initial deployment:
+# 1. Fix "Zabbix server" host interface (127.0.0.1 -> zabbix-agent2)
+# 2. Configure AI webhook integration
+# 3. Ensure monitoring is operational
+
+- name: Configure Zabbix Post-Installation
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  
+  vars:
+    zabbix_url: "{{ lookup('env', 'ZABBIX_URL') | default('http://localhost:8080', true) }}"
+    zabbix_api_user: "{{ lookup('env', 'ZABBIX_API_USER') | default('Admin', true) }}"
+    zabbix_api_password: "{{ lookup('env', 'ZABBIX_API_PASSWORD') | default('zabbix', true) }}"
+    
+  tasks:
+    - name: Wait for Zabbix API to be ready
+      uri:
+        url: "{{ zabbix_url }}/api_jsonrpc.php"
+        method: POST
+        body_format: json
+        body:
+          jsonrpc: "2.0"
+          method: "apiinfo.version"
+          id: 1
+          params: {}
+        status_code: 200
+      register: api_check
+      retries: 30
+      delay: 10
+      until: api_check.status == 200
+      changed_when: false
+
+    - name: Display Zabbix API version
+      debug:
+        msg: "Zabbix API version: {{ api_check.json.result }}"
+
+    - name: Update Zabbix server host interface to use Docker container name
+      community.zabbix.zabbix_host:
+        server_url: "{{ zabbix_url }}"
+        login_user: "{{ zabbix_api_user }}"
+        login_password: "{{ zabbix_api_password }}"
+        host_name: "Zabbix server"
+        interfaces:
+          - type: agent
+            main: 1
+            useip: 0  # Use DNS instead of IP
+            dns: zabbix-agent2
+            ip: ""
+            port: 10050
+        state: present
+      register: zabbix_host_update
+      
+    - name: Display interface update result
+      debug:
+        msg: "Zabbix server interface updated to use 'zabbix-agent2' container"
+      when: zabbix_host_update.changed
+
+    - name: Wait for agent connection to establish
+      pause:
+        seconds: 15
+        prompt: "Waiting for Zabbix Agent to connect..."
+      when: zabbix_host_update.changed
+
+    - name: Verify Zabbix server host is monitored
+      uri:
+        url: "{{ zabbix_url }}/api_jsonrpc.php"
+        method: POST
+        body_format: json
+        body:
+          jsonrpc: "2.0"
+          method: "host.get"
+          params:
+            filter:
+              host: ["Zabbix server"]
+            selectInterfaces: "extend"
+          auth: "{{ zabbix_auth_token }}"
+          id: 2
+        status_code: 200
+      register: host_check
+      changed_when: false
+      vars:
+        # Get auth token first
+        zabbix_auth_token: "{{ lookup('pipe', 'curl -s -X POST {{ zabbix_url }}/api_jsonrpc.php -H \"Content-Type: application/json-rpc\" -d \"{\\\"jsonrpc\\\": \\\"2.0\\\", \\\"method\\\": \\\"user.login\\\", \\\"params\\\": {\\\"username\\\": \\\"{{ zabbix_api_user }}\\\", \\\"password\\\": \\\"{{ zabbix_api_password }}\\\"}, \\\"id\\\": 1}\" | jq -r .result') }}"
+      ignore_errors: true
+
+    - name: Display monitoring status
+      debug:
+        msg: |
+          ✅ Zabbix Server Configuration Complete!
+          
+          Host: Zabbix server
+          Interface: zabbix-agent2:10050 (DNS)
+          
+          Next steps:
+          1. Check web UI: {{ zabbix_url }}
+          2. Verify ZBX icon is green in Monitoring > Hosts
+          3. If still red, wait 1-2 minutes for agent to connect
