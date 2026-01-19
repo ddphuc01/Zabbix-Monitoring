@@ -3,6 +3,8 @@ version: '3.8'
 services:
   # ========================================
   # PostgreSQL Database
+  # Supports BOTH official Zabbix pattern (.env_db_pgsql) and legacy secrets
+  # Priority: env_file > secrets > environment variables
   # ========================================
   postgres-server:
     image: "${POSTGRESQL_IMAGE}:${POSTGRESQL_IMAGE_TAG}"
@@ -11,16 +13,23 @@ services:
     volumes:
       - postgres-data:/var/lib/postgresql/data
       - /etc/timezone:/etc/timezone:ro
+    # Official Zabbix Docker pattern: use .env file
+    env_file:
+      - path: ${ENV_VARS_DIRECTORY}/.env_db_pgsql
+        required: false  # Fallback to environment/secrets if missing
     environment:
+      # Fallback if .env_db_pgsql doesn't exist
       POSTGRES_DB: zabbix
-      POSTGRES_USER: zabbix
+      POSTGRES_USER: ${POSTGRES_USER:-zabbix}
+      # If .env_db_pgsql exists, these are overridden
+      # If using secrets, POSTGRES_PASSWORD_FILE takes precedence
       POSTGRES_PASSWORD_FILE: /run/secrets/POSTGRES_PASSWORD
     secrets:
       - POSTGRES_PASSWORD
     networks:
       - database
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U zabbix -d zabbix"]
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER:-zabbix} -d zabbix"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -164,9 +173,14 @@ services:
       - /etc/localtime:/etc/localtime:ro
       - ${DATA_DIRECTORY}/var/lib/zabbix/ssl/certs:/etc/ssl/nginx/certs:ro
       - ${DATA_DIRECTORY}/var/lib/zabbix/ssl/keys:/etc/ssl/nginx/keys:ro
+    # Official Zabbix Docker pattern: use .env file
+    env_file:
+      - path: ${ENV_VARS_DIRECTORY}/.env_db_pgsql
+        required: false
     environment:
       DB_SERVER_HOST: postgres-server
       POSTGRES_DB: zabbix
+      POSTGRES_USER: ${POSTGRES_USER:-zabbix}
       POSTGRES_USER_FILE: /run/secrets/POSTGRES_USER
       POSTGRES_PASSWORD_FILE: /run/secrets/POSTGRES_PASSWORD
       ZBX_SERVER_HOST: zabbix-server

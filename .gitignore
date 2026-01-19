@@ -14,6 +14,8 @@ env_vars/.*
 env_vars/.POSTGRES_*
 env_vars/.MYSQL_*
 env_vars/.env_srv
+env_vars/.env_db_*
+!env_vars/.*example
 !env_vars/.gitkeep
 !env_vars/README.md
 

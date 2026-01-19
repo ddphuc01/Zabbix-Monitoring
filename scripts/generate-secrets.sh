@@ -110,6 +110,36 @@ EOF
     echo -e "${GREEN}✓  Created .env_srv${NC}"
 fi
 
+# Create .env_db_pgsql file (Official Zabbix Docker pattern)
+ENV_DB_PGSQL="${ENV_VARS_DIR}/.env_db_pgsql"
+if [ -f "${ENV_DB_PGSQL}" ]; then
+    echo -e "${YELLOW}⚠  .env_db_pgsql already exists, skipping...${NC}"
+else
+    # Read passwords from secret files
+    POSTGRES_USER_VALUE=$(cat "${ENV_VARS_DIR}/.POSTGRES_USER" 2>/dev/null || echo "zabbix")
+    POSTGRES_PASS_VALUE=$(cat "${ENV_VARS_DIR}/.POSTGRES_PASSWORD" 2>/dev/null || generate_password)
+    
+    cat > "${ENV_DB_PGSQL}" << EOF
+# PostgreSQL Database Configuration
+# This file follows official Zabbix Docker pattern
+# See: https://github.com/zabbix/zabbix-docker
+
+# Database connection
+POSTGRES_USER=${POSTGRES_USER_VALUE}
+POSTGRES_PASSWORD=${POSTGRES_PASS_VALUE}
+POSTGRES_DB=zabbix
+
+# Performance tuning
+POSTGRES_SHARED_BUFFERS=256MB
+POSTGRES_EFFECTIVE_CACHE_SIZE=512MB
+POSTGRES_MAINTENANCE_WORK_MEM=128MB
+POSTGRES_WAL_BUFFERS=8MB
+POSTGRES_MAX_CONNECTIONS=100
+EOF
+    chmod 600 "${ENV_DB_PGSQL}"
+    echo -e "${GREEN}✓  Created .env_db_pgsql${NC}"
+fi
+
 echo ""
 echo -e "${GREEN}========================================${NC}"
 echo -e "${GREEN}Secrets Generation Complete!${NC}"
@@ -119,4 +149,9 @@ echo -e "${YELLOW}Important: Secret files created with appropriate permissions.$
 echo -e "${YELLOW}They are stored in: ${ENV_VARS_DIR}${NC}"
 echo ""
 echo -e "${RED}⚠  SECURITY WARNING: Keep these files secure and never commit to version control!${NC}"
+echo ""
+echo -e "${GREEN}Next steps:${NC}"
+echo -e "  1. Configure your .env file with API keys"
+echo -e "  2. Run: ./scripts/pre-flight-check.sh"
+echo -e "  3. Run: ./scripts/init-setup.sh"
 echo ""
