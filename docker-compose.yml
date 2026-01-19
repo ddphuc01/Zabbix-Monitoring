@@ -90,23 +90,26 @@ services:
       - ${DATA_DIRECTORY}/var/lib/zabbix/ssl/certs:/var/lib/zabbix/ssl/certs:ro
       - ${DATA_DIRECTORY}/var/lib/zabbix/ssl/keys:/var/lib/zabbix/ssl/keys:ro
       - ${DATA_DIRECTORY}/var/lib/zabbix/ssl/ssl_ca:/var/lib/zabbix/ssl/ssl_ca:rw
-      - snmptraps:/var/lib/zabbix/snmptraps:ro
+      # Disabled SNMP traps volume - not in use
+      # - snmptraps:/var/lib/zabbix/snmptraps:ro
     environment:
       DB_SERVER_HOST: postgres-server
       POSTGRES_DB: zabbix
       POSTGRES_USER_FILE: /run/secrets/POSTGRES_USER
       POSTGRES_PASSWORD_FILE: /run/secrets/POSTGRES_PASSWORD
-      ZBX_ENABLE_SNMP_TRAPS: "true"
+      # Disabled SNMP traps - not monitoring network devices
+      # ZBX_ENABLE_SNMP_TRAPS: "true"
       ZBX_STARTPOLLERS: 5
       ZBX_STARTPOLLERSUNREACHABLE: 1
       ZBX_STARTTRAPPERS: 5
       ZBX_STARTPINGERS: 1
       ZBX_STARTDISCOVERERS: 1
       ZBX_STARTHTTPPOLLERS: 1
-      ZBX_JAVAGATEWAY_ENABLE: "true"
-      ZBX_JAVAGATEWAY: zabbix-java-gateway
-      ZBX_JAVAGATEWAYPORT: 10052
-      ZBX_STARTJAVAPOLLERS: 5
+      # Disabled Java Gateway - not monitoring Java apps
+      # ZBX_JAVAGATEWAY_ENABLE: "true"
+      # ZBX_JAVAGATEWAY: zabbix-java-gateway
+      # ZBX_JAVAGATEWAYPORT: 10052
+      # ZBX_STARTJAVAPOLLERS: 5
       ZBX_CACHESIZE: 128M
       ZBX_HISTORYCACHESIZE: 64M
       ZBX_TRENDCACHESIZE: 32M
@@ -251,33 +254,34 @@ services:
       com.zabbix.os: "${ALPINE_OS_TAG}"
 
   # ========================================
-  # Zabbix Java Gateway
+  # Zabbix Java Gateway - DISABLED (not monitoring Java apps)
+  # To enable: uncomment this section and Java Gateway config in zabbix-server
   # ========================================
-  zabbix-java-gateway:
-    image: "${ZABBIX_JAVA_GATEWAY_IMAGE}:${ZABBIX_ALPINE_IMAGE_TAG}${ZABBIX_IMAGE_TAG_POSTFIX}"
-    container_name: zabbix-java-gateway
-    restart: "${RESTART_POLICY}"
-    ports:
-      - "${ZABBIX_JAVA_GATEWAY_PORT}:10052"
-    environment:
-      ZBX_START_POLLERS: 5
-      ZBX_TIMEOUT: 3
-      ZBX_DEBUGLEVEL: info
-    networks:
-      - backend
-    deploy:
-      resources:
-        limits:
-          cpus: '0.5'
-          memory: 512M
-        reservations:
-          cpus: '0.25'
-          memory: 256M
-    labels:
-      com.zabbix.description: "Zabbix Java Gateway"
-      com.zabbix.company: "Zabbix SIA"
-      com.zabbix.component: "java-gateway"
-      com.zabbix.os: "${ALPINE_OS_TAG}"
+  # zabbix-java-gateway:
+  #   image: "${ZABBIX_JAVA_GATEWAY_IMAGE}:${ZABBIX_ALPINE_IMAGE_TAG}${ZABBIX_IMAGE_TAG_POSTFIX}"
+  #   container_name: zabbix-java-gateway
+  #   restart: "${RESTART_POLICY}"
+  #   ports:
+  #     - "${ZABBIX_JAVA_GATEWAY_PORT}:10052"
+  #   environment:
+  #     ZBX_START_POLLERS: 5
+  #     ZBX_TIMEOUT: 3
+  #     ZBX_DEBUGLEVEL: info
+  #   networks:
+  #     - backend
+  #   deploy:
+  #     resources:
+  #       limits:
+  #         cpus: '0.5'
+  #         memory: 512M
+  #       reservations:
+  #         cpus: '0.25'
+  #         memory: 256M
+  #   labels:
+  #     com.zabbix.description: "Zabbix Java Gateway"
+  #     com.zabbix.company: "Zabbix SIA"
+  #     com.zabbix.component: "java-gateway"
+  #     com.zabbix.os: "${ALPINE_OS_TAG}"
 
   # ========================================
   # Zabbix Web Service (Report Generation)
@@ -312,23 +316,24 @@ services:
       com.zabbix.os: "${ALPINE_OS_TAG}"
 
   # ========================================
-  # SNMP Traps Receiver
+  # SNMP Traps Receiver - DISABLED (not monitoring network devices)
+  # To enable: uncomment this section and ZBX_ENABLE_SNMP_TRAPS in zabbix-server
   # ========================================
-  zabbix-snmptraps:
-    image: "${ZABBIX_SNMPTRAPS_IMAGE}:${ZABBIX_ALPINE_IMAGE_TAG}${ZABBIX_IMAGE_TAG_POSTFIX}"
-    container_name: zabbix-snmptraps
-    restart: "${RESTART_POLICY}"
-    ports:
-      - "${ZABBIX_SNMPTRAPS_PORT}:1162/udp"
-    volumes:
-      - snmptraps:/var/lib/zabbix/snmptraps:rw
-    networks:
-      - backend
-    labels:
-      com.zabbix.description: "Zabbix SNMP traps receiver"
-      com.zabbix.company: "Zabbix SIA"
-      com.zabbix.component: "snmptraps"
-      com.zabbix.os: "${ALPINE_OS_TAG}"
+  # zabbix-snmptraps:
+  #   image: "${ZABBIX_SNMPTRAPS_IMAGE}:${ZABBIX_ALPINE_IMAGE_TAG}${ZABBIX_IMAGE_TAG_POSTFIX}"
+  #   container_name: zabbix-snmptraps
+  #   restart: "${RESTART_POLICY}"
+  #   ports:
+  #     - "${ZABBIX_SNMPTRAPS_PORT}:1162/udp"
+  #   volumes:
+  #     - snmptraps:/var/lib/zabbix/snmptraps:rw
+  #   networks:
+  #     - backend
+  #   labels:
+  #     com.zabbix.description: "Zabbix SNMP traps receiver"
+  #     com.zabbix.company: "Zabbix SIA"
+  #     com.zabbix.component: "snmptraps"
+  #     com.zabbix.os: "${ALPINE_OS_TAG}"
 
   # ========================================
   # Redis Cache (AI Response Caching)
