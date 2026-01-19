@@ -663,32 +663,19 @@ def webhook():
         # Skip non-critical repetitive alerts to save quota
         if should_skip_alert(alert_data):
             logger.info(f"⏭️  Alert skipped (filtered): {alert_data['trigger']}")
-            # Still send to Telegram but without AI analysis
+            # Still send to Telegram but without diagnostics
             simple_message = f"⚪ **{alert_data['trigger']}**\n"
             simple_message += f"🖥️ Host: `{alert_data['host']}`\n"
             simple_message += f"⏰ Time: {alert_data['time']}\n"
             simple_message += f"📊 Severity: {alert_data['severity']}\n\n"
-            simple_message += "_ℹ️ Alert filtered (non-critical service). AI analysis skipped to save quota._"
-            send_telegram_alert(simple_message, alert_data=alert_data)
+            simple_message += "_ℹ️ Alert filtered (non-critical service)._"
+            send_telegram_alert(simple_message, alert_data=alert_data, enable_ai_button=False)
             return "Alert filtered", 200
-        
-        # Check cache first
-        cache_key = CacheManager.get_cache_key(alert_data)
-        cached_result = CacheManager.get(cache_key)
-        if cached_result:
-            return cached_result['analysis'], 200
 
-        # Execute Ansible diagnostics
+        # Execute Ansible diagnostics to get system metrics
         ansible_data = AnsibleExecutor.run_diagnostics(alert_data['host'])
         
-        # Analyze with Groq
-        result = GroqAnalyzer.analyze(alert_data, ansible_data)
-        
-        # Cache Result
-        if 'error' not in result:
-             CacheManager.set(cache_key, result)
-        
-        # Format message with metadata
+        # Format message with metadata and diagnostics
         alert_name = alert_data.get('trigger', 'Alert')
         hostname = alert_data.get('host', 'Unknown')
         severity = alert_data.get('severity', 'Unknown')
@@ -712,21 +699,54 @@ def webhook():
         header += f"📊 Severity: {severity}"
         if event_id:
             header += f" | ID: `{event_id}`"
-        header += "\n\n---\n\n"
+        header += "\n\n"
         
-        message_with_header = header + result['analysis']
+        # Add Ansible diagnostics if available
+        if ansible_data and isinstance(ansible_data, dict):
+            header += "**📈 System Metrics:**\n"
+            
+            # Extract key metrics from stdout
+            stdout = ansible_data.get('stdout', '')
+            
+            # Try to parse metrics from output
+            if 'CPU' in stdout or 'Memory' in stdout:
+                lines = stdout.split('\n')
+                for line in lines[:10]:  # First 10 lines usually have summary
+                    if line.strip() and not line.startswith('PLAY'):
+                        header += f"• {line.strip()}\n"
+            else:
+                header += f"• Ansible diagnostics executed\n"
+                header += f"• Check output for details\n"
+            
+            header += "\n"
         
-        # Send to Telegram with interactive buttons
-        send_telegram_alert(message_with_header, alert_data=alert_data)
+        # Add footer note about AI
+        header += "_💡 Click 'Get AI Analysis' below for detailed recommendations._"
         
-        return result['analysis'], 200
+        # Store alert+ansible data in cache for AI button later
+        cache_key = f"alert_data:{event_id}"
+        if redis_client:
+            try:
+                full_alert_data = {
+                    'alert': alert_data,
+                    'ansible': ansible_data
+                }
+                redis_client.setex(cache_key, 3600, json.dumps(full_alert_data))
+                logger.info(f"💾 Cached alert data: {cache_key}")
+            except Exception as e:
+                logger.error(f"Failed to cache alert data: {e}")
+        
+        # Send to Telegram with AI analysis button
+        send_telegram_alert(header, alert_data=alert_data, enable_ai_button=True)
+        
+        return "Alert sent (AI on-demand)", 200
         
     except Exception as e:
         logger.error(f"❌ Error in /webhook: {e}")
         return f"❌ AI Analysis Error: {str(e)}", 500
 
 
-def send_telegram_alert(message, alert_data=None):
+def send_telegram_alert(message, alert_data=None, enable_ai_button=False):
     """Send alert message to Telegram with inline keyboard buttons"""
     token = os.getenv('TELEGRAM_BOT_TOKEN')
     chat_id = os.getenv('TELEGRAM_CHAT_ID')
@@ -749,6 +769,12 @@ def send_telegram_alert(message, alert_data=None):
             alert_type = GroqAnalyzer.determine_alert_type(trigger_name)
             
             buttons = []
+            
+            # AI Analysis button (only if enabled)
+            if enable_ai_button and event_id:
+                buttons.append(
+                    [{"text": "🤖 Get AI Analysis", "callback_data": f"ai_analysis:{event_id}"}]
+                )
             
             # Service-specific buttons
             if alert_type == 'SERVICE':

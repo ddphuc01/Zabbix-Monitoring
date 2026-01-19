@@ -22,6 +22,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from reports import ReportGenerator
 from email_sender import EmailSender
 import pytz
+import redis
 
 # Logging
 logging.basicConfig(
@@ -36,6 +37,24 @@ ZABBIX_API_URL = os.getenv('ZABBIX_API_URL', 'http://zabbix-api-connector:8000')
 ANSIBLE_API_URL = os.getenv('ANSIBLE_API_URL', 'http://ansible-executor:5001')
 GROQ_API_KEY = os.getenv('GROQ_API_KEY', '')
 GROQ_API_BASE = 'https://api.groq.com/openai/v1'
+
+# Redis configuration
+REDIS_HOST = os.getenv('REDIS_HOST', 'redis')
+REDIS_PORT = int(os.getenv('REDIS_PORT', 6379))
+
+# Initialize Redis client
+try:
+    redis_client = redis.Redis(
+        host=REDIS_HOST,
+        port=REDIS_PORT,
+        decode_responses=True,
+        socket_timeout=5
+    )
+    redis_client.ping()
+    logger.info("✅ Bot connected to Redis")
+except Exception as e:
+    logger.warning(f"⚠️ Redis connection failed: {e}, alert data caching disabled")
+    redis_client = None
 
 # User roles (simple implementation - later use DB)
 USER_ROLES = {
@@ -299,6 +318,14 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif action == 'diagnostics':
         hostname = parts[1] if len(parts) > 1 else 'Unknown'
         await execute_host_diagnostic(query, hostname)
+        return
+    
+    elif action == 'ai_analysis':
+        event_id = parts[1] if len(parts) > 1 else None
+        if event_id:
+            await execute_ai_analysis(query, event_id)
+        else:
+            await query.edit_message_text("❌ Invalid AI analysis request")
         return
     
     # Legacy format: action:event_id
@@ -743,6 +770,125 @@ async def execute_host_diagnostic(query, hostname: str):
         await query.edit_message_text(
             f"❌ <b>Error</b>\n\n"
             f"Failed to run diagnostic: {str(e)}",
+            parse_mode='HTML'
+        )
+
+async def execute_ai_analysis(query, event_id: str):
+    """Execute AI analysis on demand when user clicks button"""
+    try:
+        await query.edit_message_text(
+            f"🤖 <b>Generating AI Analysis...</b>\n\n"
+            f"Event: #{event_id}\n\n"
+            f"⏳ Please wait...",
+            parse_mode='HTML'
+        )
+        
+        # Retrieve cached alert data from Redis
+        if not redis_client:
+            await query.edit_message_text(
+                f"❌ <b>Redis Not Available</b>\n\n"
+                f"Cannot retrieve alert data.\n"
+                f"AI analysis requires Redis for caching.",
+                parse_mode='HTML'
+            )
+            return
+        
+        cache_key = f"alert_data:{event_id}"
+        try:
+            cached_data = redis_client.get(cache_key)
+            if not cached_data:
+                await query.edit_message_text(
+                    f"❌ <b>Alert Data Not Found</b>\n\n"
+                    f"Event: #{event_id}\n\n"
+                    f"Alert data expired or not available.\n"
+                    f"AI analysis must be requested within 1 hour of alert.",
+                    parse_mode='HTML'
+                )
+                return
+            
+            full_alert_data = json.loads(cached_data)
+            alert_data = full_alert_data.get('alert', {})
+            ansible_data = full_alert_data.get('ansible', {})
+            
+        except Exception as e:
+            logger.error(f"Failed to retrieve alert data: {e}")
+            await query.edit_message_text(
+                f"❌ <b>Cache Retrieval Error</b>\n\n"
+                f"Failed to load alert data: {str(e)}",
+                parse_mode='HTML'
+            )
+            return
+        
+        # Call Groq API for AI analysis
+        if not GROQ_API_KEY:
+            await query.edit_message_text(
+                f"❌ <b>Groq API Not Configured</b>\n\n"
+                f"AI analysis requires GROQ_API_KEY.",
+                parse_mode='HTML'
+            )
+            return
+        
+        try:
+            # Prepare prompt for Groq
+            
+            groq_client = Groq(api_key=GROQ_API_KEY)
+            
+            # Build analysis request
+            user_content = {
+                "alert_type": "UNKNOWN",  # Can be enhanced
+                "hostname": alert_data.get('host', 'Unknown'),
+                "current_value": alert_data.get('value', 'N/A'),
+                "threshold": "N/A",
+                "timestamp": alert_data.get('time', 'N/A'),
+                "ansible_output": ansible_data,
+                "service_info": {
+                    "environment": "production",
+                    "app_type": "web",
+                    "expected_load": "normal"
+                }
+            }
+            
+            system_prompt = """Ban la System Administrator phan tich Zabbix alerts. 
+Dua ra phan tich ngan gon (150-200 words) bang Tieng Viet:
+- Nguyen nhan chinh
+- Khuyen nghi hanh dong cu the
+- Urgency level
+Dung emoji de de hieu hon."""
+            
+            completion = groq_client.chat.completions.create(
+                model="llama-3.3-70b-versatile",
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": json.dumps(user_content)}
+                ],
+                max_tokens=200,
+                temperature=0.3
+            )
+            
+            analysis_text = completion.choices[0].message.content
+            
+            # Send AI analysis as response
+            await query.edit_message_text(
+                f"🤖 <b>AI Analysis</b>\n\n"
+                f"{analysis_text}\n\n"
+                f"<i>Powered by Groq AI</i>",
+                parse_mode='HTML'
+            )
+            
+        except Exception as e:
+            logger.error(f"Groq API error: {e}")
+            await query.edit_message_text(
+                f"❌ <b>AI Analysis Failed</b>\n\n"
+                f"Error: {str(e)}\n\n"
+                f"<i>Groq API may be unavailable or quota exceeded.</i>",
+                parse_mode='HTML'
+            )
+            
+    except Exception as e:
+        logger.error(f"AI analysis error: {e}")
+        await query.edit_message_text(
+            f"❌ <b>Error</b>\n\n"
+            f"Failed to generate AI analysis: {str(e)}",
             parse_mode='HTML'
         )
     except Exception as e:
