@@ -96,7 +96,6 @@ services:
       - ${DATA_DIRECTORY}/var/lib/zabbix/ssl/ssl_ca:/var/lib/zabbix/ssl/ssl_ca:rw
       # Disabled SNMP traps volume - not in use
       # - snmptraps:/var/lib/zabbix/snmptraps:ro
-    environment:
     # Official Zabbix Docker pattern: use .env file
     env_file:
       - path: ${ENV_VARS_DIRECTORY}/.env_db_pgsql
