@@ -1138,10 +1138,14 @@ async def ask_groq(question: str, context: dict, user_name: str = "User") -> str
                 available = "Unknown"
                 interfaces = h.get("interfaces", [])
                 if interfaces and len(interfaces) > 0:
-                    # available: 0=unknown, 1=available, 2=unavailable (INTEGER)
+                    # available: 0=unknown, 1=available, 2=unavailable (returned as STRING by API)
                     available_map = {0: "Unknown", 1: "Available", 2: "Unavailable"}
                     available_code = interfaces[0].get("available")
-                    available = available_map.get(available_code, "Unknown")
+                    # Convert to int for lookup
+                    try:
+                        available = available_map.get(int(available_code), "Unknown")
+                    except (ValueError, TypeError):
+                        available = "Unknown"
                 
                 context_str += f"- {host_name}: {status}, {available}\n"
             context_str += "\n"
