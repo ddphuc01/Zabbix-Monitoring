@@ -1061,6 +1061,7 @@ async def build_zabbix_context(question: str) -> dict:
             })
             if 'result' in response:
                 context["hosts"] = response['result']
+                logger.info(f"🏠 Zabbix hosts response: {response['result']}")
         
         # Fallback: If no specific context gathered, fetch general overview
         if not context["problems"] and not context["metrics"] and not context["hosts"]:
