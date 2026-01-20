@@ -130,17 +130,33 @@ class ZabbixRPC:
             if not success:
                 raise Exception(msg)
 
+        # Zabbix 7.0+ requires Authorization header, 'auth' param is removed/deprecated
+        headers = {
+            "Content-Type": "application/json-rpc", 
+            "Authorization": f"Bearer {self.auth_token}"
+        }
+        
         payload = {
             "jsonrpc": "2.0",
             "method": method,
             "params": params or {},
-            "auth": self.auth_token,
             "id": self.id
         }
         self.id += 1
 
         try:
-            response = requests.post(self.url, json=payload, timeout=10)
+            logger.info(f"📤 Zabbix API Request: {method}")
+            response = requests.post(self.url, json=payload, headers=headers, timeout=10)
+            response.raise_for_status()
+            
+            result = response.json()
+            if 'error' in result:
+                logger.error(f"❌ Zabbix API Error Payload: {result['error']}")
+                
+            return result
+        except Exception as e:
+            logger.error(f"❌ Zabbix API Exception ({method}): {e}")
+            raise
             response.raise_for_status()
             return response.json()
         except Exception as e:
