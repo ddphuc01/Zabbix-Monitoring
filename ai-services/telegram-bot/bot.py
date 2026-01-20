@@ -1020,10 +1020,17 @@ async def build_zabbix_context(question: str) -> dict:
     try:
         # Check for alert/problem intent
         if any(keyword in question_lower for keyword in ['alert', 'problem', 'issue', 'vấn đề', 'lỗi', 'cảnh báo', 'sự cố']):
-            response = requests.get(f"{ZABBIX_API_URL}/problems", params={"limit": 5}, timeout=10)
-            if response.status_code == 200:
-                data = response.json()
-                context["problems"] = data.get("problems", [])[:5]
+            response = zabbix_client.call("problem.get", {
+                "output": "extend",
+                "selectAcknowledges": "extend",
+                "selectTags": "extend",
+                "recent": True,
+                "limit": 5,
+                "sortfield": ["eventid"],
+                "sortorder": "DESC"
+            })
+            if 'result' in response:
+                context["problems"] = response['result']
         
         # Check for metrics intent (CPU, memory, disk, etc.)
         metric_keywords = {
@@ -1035,47 +1042,49 @@ async def build_zabbix_context(question: str) -> dict:
         
         for metric_type, keywords in metric_keywords.items():
             if any(kw in question_lower for kw in keywords):
-                response = requests.get(
-                    f"{ZABBIX_API_URL}/metrics/search",
-                    params={"keyword": metric_type, "limit": 5},
-                    timeout=10
-                )
-                if response.status_code == 200:
-                    data = response.json()
-                    context["metrics"].extend(data.get("metrics", [])[:5])
+                # Search items by name using item.get
+                response = zabbix_client.call("item.get", {
+                    "output": ["itemid", "name", "lastvalue", "units", "hostid"],
+                    "search": {"name": metric_type},
+                    "limit": 5,
+                    "sortfield": "name"
+                })
+                if 'result' in response:
+                    context["metrics"].extend(response['result'])
         
         # Check for host/server/system status intent
         if any(keyword in question_lower for keyword in ['server', 'host', 'máy chủ', 'status', 'health', 'tình trạng', 'hệ thống', 'system', 'thế nào', 'như thế nào', 'hiện tại']):
-            # Get all hosts first
-            response = requests.get(f"{ZABBIX_API_URL}/hosts", params={"limit": 3}, timeout=10)
-            if response.status_code == 200:
-                data = response.json()
-                hosts = data.get("hosts", [])
-                
-                # Get detailed status for each host
-                for host in hosts[:2]:  # Limit to 2 hosts to avoid overwhelming
-                    host_id = host.get("id")
-                    status_response = requests.get(
-                        f"{ZABBIX_API_URL}/hosts/{host_id}/status",
-                        timeout=10
-                    )
-                    if status_response.status_code == 200:
-                        context["hosts"].append(status_response.json())
+            response = zabbix_client.call("host.get", {
+                "output": ["host", "name", "status", "available", "error"],
+                "selectInterfaces": ["ip", "dns"],
+                "limit": 5
+            })
+            if 'result' in response:
+                context["hosts"] = response['result']
         
         # Fallback: If no specific context gathered, fetch general overview
         if not context["problems"] and not context["metrics"] and not context["hosts"]:
             logger.info("No specific keywords matched, fetching general overview")
             # Get recent problems
-            response = requests.get(f"{ZABBIX_API_URL}/problems", params={"limit": 5}, timeout=10)
-            if response.status_code == 200:
-                data = response.json()
-                context["problems"] = data.get("problems", [])[:5]
+            response = zabbix_client.call("problem.get", {
+                "output": "extend",
+                "selectAcknowledges": "extend",
+                "selectTags": "extend",
+                "recent": True,
+                "limit": 5,
+                "sortfield": ["eventid"],
+                "sortorder": "DESC"
+            })
+            if 'result' in response:
+                context["problems"] = response['result']
             
             # Get hosts
-            response = requests.get(f"{ZABBIX_API_URL}/hosts", params={"limit": 2}, timeout=10)
-            if response.status_code == 200:
-                data = response.json()
-                context["hosts"] = data.get("hosts", [])[:2]
+            response = zabbix_client.call("host.get", {
+                "output": ["host", "name", "status", "available"],
+                "limit": 2
+            })
+            if 'result' in response:
+                context["hosts"] = response['result']
     
     except Exception as e:
         logger.error(f"Error building context: {e}")
@@ -1195,8 +1204,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # 1. Bot is mentioned (@ZabbixMonitoringPhucBot)
     # 2. Message is a reply to bot's message
     if chat_type in ['group', 'supergroup']:
-        bot_username = (await context.bot.get_me()).username
-        is_mentioned = f"@{bot_username}" in user_message
+        bot = await context.bot.get_me()
+        bot_username = bot.username
+        # Case-insensitive mention check
+        is_mentioned = f"@{bot_username.lower()}" in user_message.lower()
         is_reply_to_bot = (
             update.message.reply_to_message and 
             update.message.reply_to_message.from_user.is_bot
@@ -1207,8 +1218,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         
         # Remove bot mention from message
+        # Remove bot mention from message (case-insensitive replace)
         if is_mentioned:
-            user_message = user_message.replace(f"@{bot_username}", "").strip()
+            # Simple regex replace or just splitting
+            import re
+            user_message = re.sub(f"@{bot_username}", "", user_message, flags=re.IGNORECASE).strip()
     
     logger.info(f"AI Chat from {user_name} ({user_id}) in {chat_type}: {user_message}")
     
