@@ -1108,21 +1108,32 @@ async def ask_groq(question: str, context: dict, user_name: str = "User") -> str
         if context.get("problems"):
             context_str += "**Active Problems:**\n"
             for p in context["problems"]:
-                context_str += f"- #{p.get('id')}: {p.get('name')} (Severity: {p.get('severity')}, Host: {p.get('host', 'Unknown')})\n"
+                # Zabbix 7.0 problem.get: eventid, name, severity, clock, r_eventid, etc.
+                problem_id = p.get('eventid', p.get('id', 'N/A'))
+                problem_name = p.get('name', 'Unknown problem')
+                severity_map = {'0': 'Not classified', '1': 'Information', '2': 'Warning', '3': 'Average', '4': 'High', '5': 'Disaster'}
+                severity = severity_map.get(str(p.get('severity', '0')), 'Unknown')
+                context_str += f"- #{problem_id}: {problem_name} (Severity: {severity})\n"
             context_str += "\n"
         
         if context.get("metrics"):
             context_str += "**Metrics:**\n"
             for m in context["metrics"]:
-                context_str += f"- {m.get('name')}: {m.get('value')} {m.get('units')} (Host: {m.get('host')})\n"
+                # Zabbix 7.0 item.get: itemid, name, lastvalue, units, hostid
+                metric_name = m.get('name', 'Unknown metric')
+                lastvalue = m.get('lastvalue', 'N/A')
+                units = m.get('units', '')
+                context_str += f"- {metric_name}: {lastvalue} {units}\n"
             context_str += "\n"
         
         if context.get("hosts"):
             context_str += "**Host Status:**\n"
             for h in context["hosts"]:
-                host_info = h.get("host", {})
-                health = h.get("health", {})
-                context_str += f"- {host_info.get('display_name')}: {health.get('status')} ({health.get('active_problems', 0)} problems)\n"
+                # Zabbix 7.0 host.get returns: host, name, status, available, etc.
+                host_name = h.get("name", h.get("host", "Unknown"))
+                status = "Enabled" if h.get("status") == "0" else "Disabled"
+                available = "Available" if h.get("available") == "1" else "Unavailable"
+                context_str += f"- {host_name}: {status}, {available}\n"
             context_str += "\n"
         
         # Build AI prompt
