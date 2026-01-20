@@ -1200,31 +1200,36 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     chat_type = update.message.chat.type
     
+    logger.info(f"📩 Message received from {user_name} in {chat_type}: '{user_message}'")
+
     # In group chats, only respond if:
     # 1. Bot is mentioned (@ZabbixMonitoringPhucBot)
     # 2. Message is a reply to bot's message
     if chat_type in ['group', 'supergroup']:
-        bot = await context.bot.get_me()
-        bot_username = bot.username
-        # Case-insensitive mention check
+        # Try to get username from context or fetch
+        if context.bot.username:
+            bot_username = context.bot.username
+        else:
+            bot = await context.bot.get_me()
+            bot_username = bot.username
+            
         is_mentioned = f"@{bot_username.lower()}" in user_message.lower()
-        is_reply_to_bot = (
-            update.message.reply_to_message and 
-            update.message.reply_to_message.from_user.is_bot
-        )
+        is_reply = update.message.reply_to_message
+        is_reply_to_bot = (is_reply and is_reply.from_user.is_bot and is_reply.from_user.username == bot_username)
+        
+        logger.info(f"🔎 Group Check: BotUser='{bot_username}', Mentioned={is_mentioned}, ReplyToBot={is_reply_to_bot}")
         
         if not (is_mentioned or is_reply_to_bot):
-            # Ignore messages in group that don't mention bot
+            logger.info("❌ Ignoring group message: Not mentioned or reply")
             return
         
-        # Remove bot mention from message
         # Remove bot mention from message (case-insensitive replace)
         if is_mentioned:
-            # Simple regex replace or just splitting
             import re
             user_message = re.sub(f"@{bot_username}", "", user_message, flags=re.IGNORECASE).strip()
+            logger.info(f"✂️ Message after mention removal: '{user_message}'")
     
-    logger.info(f"AI Chat from {user_name} ({user_id}) in {chat_type}: {user_message}")
+    logger.info(f"🤖 Processing AI Chat: {user_message}")
     
     # Send typing indicator
     await update.message.chat.send_action("typing")
