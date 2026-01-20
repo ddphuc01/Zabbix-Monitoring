@@ -64,21 +64,122 @@
         prompt: "Waiting for Zabbix Agent to connect..."
       when: zabbix_host_update.changed
 
+
+    - name: Create 'AI Webhook (Groq)' Media Type
+      community.zabbix.zabbix_mediatype:
+        server_url: "{{ zabbix_url }}"
+        login_user: "{{ zabbix_api_user }}"
+        login_password: "{{ zabbix_api_password }}"
+        name: "AI Webhook (Groq)"
+        type: webhook
+        status: enabled
+        script: |
+          var params = JSON.parse(value);
+          var req = new HttpRequest();
+          req.addHeader('Content-Type: application/json');
+
+          var payload = JSON.stringify({
+              trigger_name: params.trigger_name,
+              host_name: params.host_name,
+              trigger_severity: params.trigger_severity,
+              trigger_value: params.trigger_value,
+              event_time: params.event_time,
+              trigger_description: params.trigger_description,
+              event_id: params.event_id
+          });
+
+          var response = req.post('http://ai-webhook:5000/webhook', payload);
+
+          if (req.getStatus() !== 200) {
+              throw 'Webhook failed: ' + response;
+          }
+
+          return 'OK';
+        parameters:
+          - name: trigger_name
+            value: "{ALERT.SUBJECT}"
+          - name: host_name
+            value: "{HOST.NAME}"
+          - name: trigger_severity
+            value: "{TRIGGER.SEVERITY}"
+          - name: trigger_value
+            value: "{ITEM.VALUE}"
+          - name: event_time
+            value: "{EVENT.TIME}"
+          - name: trigger_description
+            value: "{TRIGGER.DESCRIPTION}"
+          - name: event_id
+            value: "{EVENT.ID}"
+      register: webhook_create
+
+    - name: Display media type creation result
+      debug:
+        msg: "Media Type 'AI Webhook (Groq)' created/updated"
+      when: webhook_create.changed
+
+    - name: Assign 'AI Webhook (Groq)' to Admin user
+      community.zabbix.zabbix_user:
+        server_url: "{{ zabbix_url }}"
+        login_user: "{{ zabbix_api_user }}"
+        login_password: "{{ zabbix_api_password }}"
+        alias: "{{ zabbix_api_user }}"
+        usrgrps: 
+          - Zabbix administrators
+        media:
+          - active: false  # Existing Email (disable or keep)
+            mediatype: Email
+            sendto: "admin@example.com"
+          - active: true
+            mediatype: "AI Webhook (Groq)"
+            sendto: "ai-webhook"
+            period: "1-7,00:00-24:00"
+            severity:
+              - not_classified
+              - information
+              - warning
+              - average
+              - high
+              - disaster
+      register: user_update
+
+    - name: Create 'AI Alert with Telegram' Trigger Action
+      community.zabbix.zabbix_action:
+        server_url: "{{ zabbix_url }}"
+        login_user: "{{ zabbix_api_user }}"
+        login_password: "{{ zabbix_api_password }}"
+        name: "AI Alert with Telegram"
+        status: enabled
+        eventsource: trigger
+        operations:
+          - operationtype: send_message
+            subject: "{TRIGGER.STATUS}: {TRIGGER.NAME}"
+            message: "Problem started at {EVENT.TIME} on {EVENT.DATE}\nHost: {HOST.NAME}\nSeverity: {TRIGGER.SEVERITY}\nValue: {ITEM.VALUE}"
+            mediatype: "AI Webhook (Groq)"
+            sendto_users:
+              - Admin
+        filter:
+          conditions:
+            - type: trigger_severity
+              operator: ">="
+              value: average  # High or Average
+      register: action_create
+
     - name: Display completion message
       debug:
         msg: |
           ========================================
-          ✅ Zabbix Server Configuration Complete!
+          ✅ Zabbix Post-Install Configuration Complete!
           ========================================
           
-          Host: Zabbix server
-          Interface: zabbix-agent2:10050 (DNS)
+          1. Server Host Interface: FIXED (DNS: zabbix-agent2)
+          2. Media Type: CREATED (AI Webhook (Groq))
+          3. User Media: ASSIGNED (Admin -> AI Webhook)
+          4. Action: CREATED (AI Alert with Telegram)
           
           Next steps:
-          1. Check web UI: {{ zabbix_url }}
-          2. Go to: Monitoring → Hosts
-          3. Verify ZBX icon is green for "Zabbix server"
-          4. If still red, wait 1-2 minutes for agent to connect
+          1. Open Zabbix UI: {{ zabbix_url }}
+          2. Verify alerts by running a test trigger
+          3. Check Telegram for notifications
           
           ========================================
 
