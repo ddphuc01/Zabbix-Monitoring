@@ -1131,8 +1131,10 @@ async def ask_groq(question: str, context: dict, user_name: str = "User") -> str
             for h in context["hosts"]:
                 # Zabbix 7.0 host.get returns: host, name, status, available, etc.
                 host_name = h.get("name", h.get("host", "Unknown"))
-                status = "Enabled" if h.get("status") == "0" else "Disabled"
-                available = "Available" if h.get("available") == "1" else "Unavailable"
+                status = "Enabled" if str(h.get("status")) == "0" else "Disabled"
+                # available: 0=unknown, 1=available, 2=unavailable (INTEGER)
+                available_map = {0: "Unknown", 1: "Available", 2: "Unavailable"}
+                available = available_map.get(h.get("available"), "Unknown")
                 context_str += f"- {host_name}: {status}, {available}\n"
             context_str += "\n"
         
