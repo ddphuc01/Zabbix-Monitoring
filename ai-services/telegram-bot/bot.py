@@ -1055,8 +1055,8 @@ async def build_zabbix_context(question: str) -> dict:
         # Check for host/server/system status intent
         if any(keyword in question_lower for keyword in ['server', 'host', 'máy chủ', 'status', 'health', 'tình trạng', 'hệ thống', 'system', 'thế nào', 'như thế nào', 'hiện tại']):
             response = zabbix_client.call("host.get", {
-                "output": ["host", "name", "status", "available", "error"],
-                "selectInterfaces": ["ip", "dns"],
+                "output": ["host", "name", "status", "error"],
+                "selectInterfaces": ["ip", "dns", "available", "type"],
                 "limit": 5
             })
             if 'result' in response:
@@ -1130,12 +1130,19 @@ async def ask_groq(question: str, context: dict, user_name: str = "User") -> str
         if context.get("hosts"):
             context_str += "**Host Status:**\n"
             for h in context["hosts"]:
-                # Zabbix 7.0 host.get returns: host, name, status, available, etc.
+                # Zabbix 7.0: status is on host, available is on interface
                 host_name = h.get("name", h.get("host", "Unknown"))
                 status = "Enabled" if str(h.get("status")) == "0" else "Disabled"
-                # available: 0=unknown, 1=available, 2=unavailable (INTEGER)
-                available_map = {0: "Unknown", 1: "Available", 2: "Unavailable"}
-                available = available_map.get(h.get("available"), "Unknown")
+                
+                # Get availability from first interface
+                available = "Unknown"
+                interfaces = h.get("interfaces", [])
+                if interfaces and len(interfaces) > 0:
+                    # available: 0=unknown, 1=available, 2=unavailable (INTEGER)
+                    available_map = {0: "Unknown", 1: "Available", 2: "Unavailable"}
+                    available_code = interfaces[0].get("available")
+                    available = available_map.get(available_code, "Unknown")
+                
                 context_str += f"- {host_name}: {status}, {available}\n"
             context_str += "\n"
         
