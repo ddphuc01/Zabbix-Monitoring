@@ -33,7 +33,9 @@ logger = logging.getLogger(__name__)
 
 # Configuration
 TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN', 'YOUR_BOT_TOKEN')
-ZABBIX_API_URL = os.getenv('ZABBIX_API_URL', 'http://zabbix-api-connector:8000')
+ZABBIX_API_URL = os.getenv('ZABBIX_API_URL', 'http://zabbix-web:8080/api_jsonrpc.php')
+ZABBIX_API_USER = os.getenv('ZABBIX_API_USER', 'Admin')
+ZABBIX_API_PASSWORD = os.getenv('ZABBIX_API_PASSWORD', 'zabbix')
 ANSIBLE_API_URL = os.getenv('ANSIBLE_API_URL', 'http://ansible-executor:5001')
 GROQ_API_KEY = os.getenv('GROQ_API_KEY', '')
 GROQ_API_BASE = 'https://api.groq.com/openai/v1'
@@ -83,6 +85,68 @@ def is_authorized(user_id: int, action: str) -> tuple[bool, str]:
         return True, f"Authorized as {role}"
     else:
         return False, f"Permission denied. {action} requires {', '.join([r for r, p in ROLE_PERMISSIONS.items() if action in p])} role."
+
+class ZabbixRPC:
+    """Handle Zabbix JSON-RPC Interactions"""
+    def __init__(self, url, user, password):
+        self.url = url
+        self.user = user
+        self.password = password
+        self.auth_token = None
+        self.id = 1
+
+    def login(self):
+        """Authenticate and get auth token"""
+        try:
+            payload = {
+                "jsonrpc": "2.0",
+                "method": "user.login",
+                "params": {
+                    "user": self.user,
+                    "password": self.password
+                },
+                "id": self.id
+            }
+            response = requests.post(self.url, json=payload, timeout=5)
+            response.raise_for_status()
+            result = response.json()
+            
+            if 'result' in result:
+                self.auth_token = result['result']
+                logger.info(f"✅ Zabbix Login Successful (Token: {self.auth_token[:10]}...)")
+                return True
+            else:
+                logger.error(f"❌ Zabbix Login Failed: {result.get('error')}")
+                return False
+        except Exception as e:
+            logger.error(f"❌ Zabbix Login Error: {e}")
+            return False
+
+    def call(self, method, params=None):
+        """Make generic JSON-RPC call"""
+        if not self.auth_token:
+            if not self.login():
+                raise Exception("Zabbix Authentication Failed")
+
+        payload = {
+            "jsonrpc": "2.0",
+            "method": method,
+            "params": params or {},
+            "auth": self.auth_token,
+            "id": self.id
+        }
+        self.id += 1
+
+        try:
+            response = requests.post(self.url, json=payload, timeout=10)
+            response.raise_for_status()
+            return response.json()
+        except Exception as e:
+            logger.error(f"❌ Zabbix API Error ({method}): {e}")
+            raise
+
+# Initialize Zabbix Client
+zabbix_client = ZabbixRPC(ZABBIX_API_URL, ZABBIX_API_USER, ZABBIX_API_PASSWORD)
 
 # Command Handlers
 
@@ -146,33 +210,47 @@ Alert messages include action buttons - just click!
 async def list_alerts(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """List active alerts"""
     try:
-        # Call Zabbix API
-        response = requests.get(f"{ZABBIX_API_URL}/problems", timeout=10)
-        response.raise_for_status()
-        data = response.json()
+        # Call Zabbix API (JSON-RPC)
+        response = zabbix_client.call("problem.get", {
+            "output": "extend",
+            "selectAcknowledges": "extend",
+            "selectTags": "extend",
+            "recent": "true",
+            "sortfield": ["eventid"],
+            "sortorder": "DESC",
+            "limit": 10
+        })
         
-        problems = data.get('problems', [])
+        if 'result' not in response:
+            await update.message.reply_text(f"❌ API Error: {response.get('error', {}).get('data', 'Unknown')}")
+            return
+
+        problems = response['result']
         
         if not problems:
             await update.message.reply_text("✅ No active alerts!")
             return
         
         msg = "📋 <b>Active Alerts</b>\n\n"
-        for p in problems[:10]:  # Limit to 10
-            severity = p.get('severity', 'Unknown')
+        for p in problems:
+            severity_val = int(p.get('severity', 0))
             name = p.get('name', 'N/A')
-            event_id = p.get('id', '0')
-            host = p.get('host', 'Unknown')
+            event_id = p.get('eventid', '0')
+            # Host lookup would require another API call or caching, skipping for speed or just showing simple data
+            # To get host name, problem.get usually needs 'selectHosts': 'extend'
             
-            emoji = {
-                'Disaster': '🔴',
-                'High': '🟠',
-                'Average': '🟡',
-                'Warning': '🟢'
-            }.get(severity, '⚪')
+            severity_map = {
+                5: '🔴 Disaster',
+                4: '🟠 High',
+                3: '🟡 Average',
+                2: '🔵 Warning',
+                1: '⚪ Info',
+                0: '⚫ Not Classified'
+            }
+            severity_str = severity_map.get(severity_val, 'Unknown')
             
-            msg += f"{emoji} <code>#{event_id}</code> - {name}\n"
-            msg += f"   Host: <b>{host}</b> | Severity: {severity}\n\n"
+            msg += f"{severity_str.split()[0]} <code>#{event_id}</code> - {name}\n"
+            msg += f"   Severity: {severity_str.split()[1]}\n\n"
         
         await update.message.reply_text(msg, parse_mode='HTML')
         
@@ -186,9 +264,16 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Check Zabbix API
         zabbix_status = "✅ Online"
         try:
-            response = requests.get(f"{ZABBIX_API_URL}/problems", timeout=5)
+            # Simple version check
+            response = requests.post(
+                ZABBIX_API_URL, 
+                json={"jsonrpc": "2.0", "method": "apiinfo.version", "params": [], "id": 1},
+                timeout=5
+            )
             if response.status_code != 200:
                 zabbix_status = f"⚠️ Error {response.status_code}"
+            elif 'error' in response.json():
+                zabbix_status = "⚠️ API Error"
         except Exception:
             zabbix_status = "❌ Offline"
         
