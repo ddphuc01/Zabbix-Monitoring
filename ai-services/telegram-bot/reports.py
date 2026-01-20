@@ -18,7 +18,8 @@ GROQ_API_BASE = "https://api.groq.com/openai/v1"
 
 
 class ReportGenerator:
-    def __init__(self):
+    def __init__(self, zabbix_client=None):
+        self.zabbix_client = zabbix_client
         self.zabbix_url = ZABBIX_API_URL
     
     def generate_daily_summary(self) -> str:
@@ -138,16 +139,26 @@ Tạo lúc: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
     
     def _get_recent_problems(self) -> List[Dict]:
         """Fetch problems from Zabbix API"""
+        if not self.zabbix_client:
+            logger.error("Zabbix client not initialized")
+            return []
+            
         try:
-            response = requests.get(
-                f"{self.zabbix_url}/problems",
-                params={"limit": 100},
-                timeout=10
-            )
-            if response.status_code == 200:
-                data = response.json()
-                return data.get("problems", [])
-            logger.error(f"Zabbix API error: {response.status_code}")
+            # Using JSON-RPC via injected client
+            response = self.zabbix_client.call("problem.get", {
+                "output": "extend",
+                "selectAcknowledges": "extend",
+                "selectTags": "extend",
+                "recent": True,
+                "sortfield": ["eventid"],
+                "sortorder": "DESC",
+                "limit": 100
+            })
+            
+            if 'result' in response:
+                return response['result']
+            
+            logger.error(f"Zabbix API error: {response.get('error')}")
             return []
         except Exception as e:
             logger.error(f"Error fetching problems: {e}")
@@ -155,10 +166,22 @@ Tạo lúc: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
     
     def _get_host_summary(self) -> List[Dict]:
         """Get host summary"""
+        if not self.zabbix_client:
+            logger.error("Zabbix client not initialized")
+            return []
+            
         try:
-            response = requests.get(f"{self.zabbix_url}/hosts", timeout=10)
-            if response.status_code == 200:
-                return response.json().get("hosts", [])
+            # Using JSON-RPC via injected client
+            response = self.zabbix_client.call("host.get", {
+                "output": ["host", "name", "status", "available"],
+                "selectInterfaces": ["ip", "dns"],
+                "limit": 100
+            })
+            
+            if 'result' in response:
+                return response['result']
+            
+            logger.error(f"Zabbix API error: {response.get('error')}")
             return []
         except Exception as e:
             logger.error(f"Error fetching hosts: {e}")

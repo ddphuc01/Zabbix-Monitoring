@@ -233,7 +233,7 @@ async def list_alerts(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "output": "extend",
             "selectAcknowledges": "extend",
             "selectTags": "extend",
-            "recent": "true",
+            "recent": True,
             "sortfield": ["eventid"],
             "sortorder": "DESC",
             "limit": 10
@@ -1261,7 +1261,7 @@ async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ==================== Report Commands ====================
 
-report_gen = ReportGenerator()
+report_gen = ReportGenerator(zabbix_client)
 email_sender = EmailSender()
 
 async def report_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
