@@ -102,7 +102,7 @@ class ZabbixRPC:
                 "jsonrpc": "2.0",
                 "method": "user.login",
                 "params": {
-                    "user": self.user,
+                    "username": self.user,
                     "password": self.password
                 },
                 "id": self.id
