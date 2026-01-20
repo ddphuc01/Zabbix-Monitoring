@@ -1056,13 +1056,25 @@ async def build_zabbix_context(question: str) -> dict:
         # Or check for specific metric types
         for metric_type, keywords in metric_keywords.items():
             if any(kw in question_lower for kw in keywords):
+                # Check if user is asking about a specific host
+                hostid_filter = None
+                if any(h in question_lower for h in ['zabbix server', 'host zabbix', 'máy chủ zabbix']):
+                    hostid_filter = "10084"  # Zabbix server host ID
+                
                 # Search items by name using item.get
-                response = zabbix_client.call("item.get", {
+                params = {
                     "output": ["itemid", "name", "lastvalue", "units", "hostid"],
                     "search": {"name": metric_type},
                     "limit": 5,
                     "sortfield": "name"
-                })
+                }
+                
+                # Add host filter if specified
+                if hostid_filter:
+                    params["hostids"] = hostid_filter
+                    params["monitored"] = True  # Only get active items
+                
+                response = zabbix_client.call("item.get", params)
                 if 'result' in response:
                     logger.info(f"📊 Metrics for '{metric_type}': Found {len(response['result'])} items")
                     if response['result']:
