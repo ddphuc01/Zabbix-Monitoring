@@ -1040,6 +1040,20 @@ async def build_zabbix_context(question: str) -> dict:
             'network': ['network', 'mạng', 'bandwidth']
         }
         
+        # Check if user asking about metrics in general
+        if any(kw in question_lower for kw in ['metric', 'chỉ số', 'item', 'giám sát', 'monitoring']):
+            # Fetch general metrics from Zabbix server host
+            response = zabbix_client.call("item.get", {
+                "output": ["itemid", "name", "lastvalue", "units", "hostid", "key_"],
+                "hostids": "10084",  # Zabbix server host ID
+                "monitored": True,
+                "limit": 10,
+                "sortfield": "name"
+            })
+            if 'result' in response:
+                context["metrics"].extend(response['result'])
+        
+        # Or check for specific metric types
         for metric_type, keywords in metric_keywords.items():
             if any(kw in question_lower for kw in keywords):
                 # Search items by name using item.get
