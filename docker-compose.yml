@@ -467,6 +467,41 @@ services:
       com.zabbix.component: "ansible-executor"
 
   # ========================================
+  # Telegram Bot (Interactive Alerting)
+  # ========================================
+  telegram-bot:
+    build:
+      context: ./ai-services/telegram-bot
+      dockerfile: Dockerfile
+    container_name: zabbix-telegram-bot
+    restart: "${RESTART_POLICY}"
+    environment:
+      TELEGRAM_BOT_TOKEN: "${TELEGRAM_BOT_TOKEN}"
+      ZABBIX_API_URL: "http://zabbix-web:8080/api_jsonrpc.php"
+      ANSIBLE_API_URL: "http://ansible-executor:5001"
+      GROQ_API_KEY: "${GROQ_API_KEY}"
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+    networks:
+      - backend
+    depends_on:
+      redis:
+        condition: service_healthy
+      ai-webhook:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+        reservations:
+          cpus: '0.1'
+          memory: 128M
+    labels:
+      com.zabbix.description: "Telegram bot for interactive alerts"
+      com.zabbix.component: "telegram-bot"
+
+  # ========================================
   # Ollama (Local LLM with Qwen) - DEPRECATED 2026-01-18
   # Replaced by Groq API for better performance
   # ========================================
