@@ -114,19 +114,21 @@ class ZabbixRPC:
             if 'result' in result:
                 self.auth_token = result['result']
                 logger.info(f"✅ Zabbix Login Successful (Token: {self.auth_token[:10]}...)")
-                return True
+                return True, "Success"
             else:
-                logger.error(f"❌ Zabbix Login Failed: {result.get('error')}")
-                return False
+                error = result.get('error', {}).get('data', 'Unknown Zabbix Error')
+                logger.error(f"❌ Zabbix Login Failed: {error}")
+                return False, f"Login Failed: {error}"
         except Exception as e:
             logger.error(f"❌ Zabbix Login Error: {e}")
-            return False
+            return False, f"Connection Error: {str(e)}"
 
     def call(self, method, params=None):
         """Make generic JSON-RPC call"""
         if not self.auth_token:
-            if not self.login():
-                raise Exception("Zabbix Authentication Failed")
+            success, msg = self.login()
+            if not success:
+                raise Exception(msg)
 
         payload = {
             "jsonrpc": "2.0",
