@@ -1064,6 +1064,9 @@ async def build_zabbix_context(question: str) -> dict:
                     "sortfield": "name"
                 })
                 if 'result' in response:
+                    logger.info(f"📊 Metrics for '{metric_type}': Found {len(response['result'])} items")
+                    if response['result']:
+                        logger.info(f"   Sample: {response['result'][0]}")
                     context["metrics"].extend(response['result'])
         
         # Check for host/server/system status intent
