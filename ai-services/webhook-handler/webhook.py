@@ -693,35 +693,70 @@ def webhook():
         severity_emoji = severity_emojis.get(severity, '⚪')
         
         # Build header with metadata
-        header = f"{severity_emoji} **{alert_name}**\n"
-        header += f"🖥️ Host: `{hostname}`\n"
-        header += f"⏰ Time: {event_time}\n"
-        header += f"📊 Severity: {severity}"
+        # Format datetime properly: dd/mm/yyyy HH:MM:SS
+        from datetime import datetime
+        try:
+            # Parse and reformat time if it's in HH:MM:SS format
+            if ':' in event_time and len(event_time.split(':')) == 3:
+                now = datetime.now()
+                formatted_time = now.strftime('%d/%m/%Y') + ' ' + event_time
+            else:
+                formatted_time = event_time
+        except:
+            formatted_time = event_time
+        
+        header = f"{severity_emoji} **Vấn đề: {alert_name}**\n"
+        header += f"🖥️ Máy chủ: `{hostname}`\n"
+        header += f"⏰ Thời gian: {formatted_time}\n"
+        header += f"📊 Mức độ: {severity}"
         if event_id:
             header += f" | ID: `{event_id}`"
         header += "\n\n"
         
         # Add Ansible diagnostics if available
         if ansible_data and isinstance(ansible_data, dict):
-            header += "**📈 System Metrics:**\n"
+            header += "**📈 Thông Số Hệ Thống:**\n"
             
             # Extract key metrics from stdout
             stdout = ansible_data.get('stdout', '')
+            stderr = ansible_data.get('stderr', '')
             
-            # Try to parse metrics from output
-            if 'CPU' in stdout or 'Memory' in stdout:
+            # Parse actual metrics from Ansible output
+            metrics_found = False
+            
+            # Try to extract CPU, Memory, Disk info
+            if stdout:
                 lines = stdout.split('\n')
-                for line in lines[:10]:  # First 10 lines usually have summary
-                    if line.strip() and not line.startswith('PLAY'):
-                        header += f"• {line.strip()}\n"
-            else:
-                header += f"• Ansible diagnostics executed\n"
-                header += f"• Check output for details\n"
+                for line in lines:
+                    line_lower = line.lower()
+                    # CPU metrics
+                    if 'cpu' in line_lower and '%' in line:
+                        header += f"• CPU: {line.strip()}\n"
+                        metrics_found = True
+                    # Memory metrics
+                    elif ('mem' in line_lower or 'memory' in line_lower) and ('total' in line_lower or 'used' in line_lower or 'free' in line_lower):
+                        header += f"• RAM: {line.strip()}\n"
+                        metrics_found = True
+                    # Disk metrics
+                    elif ('disk' in line_lower or 'filesystem' in line_lower or '/dev/' in line) and '%' in line:
+                        header += f"• Disk: {line.strip()}\n"
+                        metrics_found = True
+            
+            # If no specific metrics found, show generic message
+            if not metrics_found:
+                if 'status' in ansible_data and ansible_data['status'] == 'success':
+                    header += f"• ✅ Đã thu thập dữ liệu chẩn đoán\n"
+                    header += f"• 📊 Xem chi tiết bằng cách nhấn 'Phân Tích AI'\n"
+                elif stderr:
+                    header += f"• ⚠️ Lỗi khi thu thập: {stderr[:100]}\n"
+                else:
+                    header += f"• ✅ Ansible đã chạy thành công\n"
+                    header += f"• 📊 Nhấn 'Chạy Chẩn Đoán' để xem chi tiết\n"
             
             header += "\n"
         
         # Add footer note about AI
-        header += "_💡 Click 'Get AI Analysis' below for detailed recommendations._"
+        header += "_💡 Nhấn 'Phân Tích AI' bên dưới để nhận khuyến nghị chi tiết._"
         
         # Store alert+ansible data in cache for AI button later
         cache_key = f"alert_data:{event_id}"
