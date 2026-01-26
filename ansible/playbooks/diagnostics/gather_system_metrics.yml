@@ -2,103 +2,33 @@
 - name: Gather System Metrics for AI Analysis
   hosts: "{{ target_host | default('all') }}"
   gather_facts: yes
-  
+  become: yes
+
   tasks:
-    # LINUX TASKS
-    - block:
-        - name: Gather top processes (Linux)
-          shell: top -b -n 1 | head -n 20
-          register: top_output_linux
-          
-        - name: Gather process list (Linux)
-          shell: ps aux --sort=-%cpu | head -n 20
-          register: ps_output_linux
-          
-        - name: Gather disk usage (Linux)
-          shell: df -h
-          register: df_output_linux
-          
-        - name: Gather memory usage (Linux)
-          shell: free -h
-          register: free_output_linux
-          
-        - name: Gather network connections (Linux)
-          shell: netstat -an | head -n 50
-          register: netstat_output_linux
-          ignore_errors: yes
-      when: ansible_os_family != 'Windows'
-      become: yes
+    - name: Get CPU info
+      shell: top -bn1 | head -20
+      register: cpu_info
 
-    # WINDOWS TASKS
-    - block:
-        - name: Gather Top Processes (Windows)
-          win_shell: "Get-Process | Sort-Object CPU -Descending | Select-Object -First 10 | Format-Table -AutoSize | Out-String -Width 4096"
-          register: top_output_win
-          
-        - name: Gather Disk Usage (Windows)
-          win_shell: "Get-PSDrive -PSProvider FileSystem | Select-Object Name, @{Name='Used(GB)';Expression={'{0:N2}' -f ($_.Used/1GB)}}, @{Name='Free(GB)';Expression={'{0:N2}' -f ($_.Free/1GB)}}, @{Name='Total(GB)';Expression={'{0:N2}' -f (($_.Used + $_.Free)/1GB)}} | Format-Table -AutoSize | Out-String -Width 4096"
-          register: df_output_win
-          
-        - name: Gather Memory Usage (Windows)
-          win_shell: "Get-CimInstance Win32_OperatingSystem | Select-Object @{Name='TotalMem(GB)';Expression={'{0:N2}' -f ($_.TotalVisibleMemorySize / 1MB)}}, @{Name='FreeMem(GB)';Expression={'{0:N2}' -f ($_.FreePhysicalMemory / 1MB)}} | Format-Table -AutoSize | Out-String -Width 4096"
-          register: free_output_win
-          
-        - name: Gather Network Connections (Windows)
-          win_shell: "Get-NetTCPConnection | Select-Object LocalAddress, LocalPort, RemoteAddress, RemotePort, State | Sort-Object State | Select-Object -First 30 | Format-Table -AutoSize | Out-String -Width 4096"
-          register: netstat_output_win
-          ignore_errors: yes
-          
-        - name: Check All Services Status (Windows)
-          win_shell: |
-            $services = Get-Service | Select-Object Name, DisplayName, Status, StartType
-            $stopped = $services | Where-Object { $_.Status -eq 'Stopped' -and $_.StartType -eq 'Automatic' }
-            $running = $services | Where-Object { $_.Status -eq 'Running' }
-            
-            $result = @{
-              total = $services.Count
-              running = $running.Count
-              stopped_auto = $stopped.Count
-              stopped_services = ($stopped | Select-Object -First 10 | Format-Table -AutoSize | Out-String -Width 4096)
-            }
-            $result | ConvertTo-Json -Compress
-          register: services_output_win
-          ignore_errors: yes
-          
-        - name: Check Specific Service if Provided (Windows)
-          win_shell: |
-            $serviceName = "{{ service_name | default('') }}"
-            if ($serviceName) {
-              $svc = Get-Service -Name $serviceName -ErrorAction SilentlyContinue
-              if ($svc) {
-                $deps = Get-Service -Name $serviceName -DependentServices -ErrorAction SilentlyContinue
-                $result = @{
-                  name = $svc.Name
-                  display_name = $svc.DisplayName
-                  status = $svc.Status.ToString()
-                  start_type = $svc.StartType.ToString()
-                  can_stop = $svc.CanStop
-                  dependent_services = ($deps | Select-Object Name, Status | Format-Table -AutoSize | Out-String -Width 4096)
-                }
-                $result | ConvertTo-Json -Compress
-              } else {
-                @{error = "Service not found"} | ConvertTo-Json -Compress
-              }
-            } else {
-              @{info = "No specific service requested"} | ConvertTo-Json -Compress
-            }
-          register: specific_service_win
-          ignore_errors: yes
-          when: service_name is defined
-      when: ansible_os_family == 'Windows'
+    - name: Get memory info
+      shell: free -h
+      register: mem_info
 
-    - name: Return collected metrics
+    - name: Get disk info
+      shell: df -h
+      register: disk_info
+
+    - name: Get top processes
+      shell: ps aux --sort=-%cpu | head -10
+      register: top_processes
+
+    - name: Display metrics
       debug:
         msg:
-          os_family: "{{ ansible_os_family }}"
-          top: "{{ top_output_linux.stdout if ansible_os_family != 'Windows' else top_output_win.stdout }}"
-          ps: "{{ ps_output_linux.stdout if ansible_os_family != 'Windows' else 'See top output' }}"
-          df: "{{ df_output_linux.stdout if ansible_os_family != 'Windows' else df_output_win.stdout }}"
-          free: "{{ free_output_linux.stdout if ansible_os_family != 'Windows' else free_output_win.stdout }}"
-          netstat: "{{ netstat_output_linux.stdout if ansible_os_family != 'Windows' else netstat_output_win.stdout | default('N/A') }}"
-          services: "{{ services_output_win.stdout if ansible_os_family == 'Windows' else 'N/A - Linux' }}"
-          specific_service: "{{ specific_service_win.stdout if (ansible_os_family == 'Windows' and service_name is defined) else 'N/A' }}"
+          - "=== CPU ==="
+          - "{{ cpu_info.stdout }}"
+          - "=== MEMORY ==="
+          - "{{ mem_info.stdout }}"
+          - "=== DISK ==="
+          - "{{ disk_info.stdout }}"
+          - "=== TOP PROCESSES ==="
+          - "{{ top_processes.stdout }}"
