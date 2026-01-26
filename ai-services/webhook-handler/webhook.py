@@ -724,23 +724,66 @@ def webhook():
             # Parse actual metrics from Ansible output
             metrics_found = False
             
-            # Try to extract CPU, Memory, Disk info
-            if stdout:
-                lines = stdout.split('\n')
-                for line in lines:
-                    line_lower = line.lower()
-                    # CPU metrics
-                    if 'cpu' in line_lower and '%' in line:
-                        header += f"• CPU: {line.strip()}\n"
-                        metrics_found = True
-                    # Memory metrics
-                    elif ('mem' in line_lower or 'memory' in line_lower) and ('total' in line_lower or 'used' in line_lower or 'free' in line_lower):
-                        header += f"• RAM: {line.strip()}\n"
-                        metrics_found = True
-                    # Disk metrics
-                    elif ('disk' in line_lower or 'filesystem' in line_lower or '/dev/' in line) and '%' in line:
-                        header += f"• Disk: {line.strip()}\n"
-                        metrics_found = True
+            # Ansible output is JSON, need to parse it
+            try:
+                if stdout and isinstance(stdout, str):
+                    # Try to parse as JSON
+                    ansible_json = json.loads(stdout)
+                    
+                    # Extract from plays -> tasks -> hosts -> msg
+                    if 'plays' in ansible_json:
+                        for play in ansible_json['plays']:
+                            if 'tasks' in play:
+                                for task in play['tasks']:
+                                    if 'hosts' in task:
+                                        for host_name, host_data in task['hosts'].items():
+                                            if 'msg' in host_data and isinstance(host_data['msg'], list):
+                                                # msg is a list with sections
+                                                current_section = None
+                                                for line in host_data['msg']:
+                                                    if '=== CPU ===' in line:
+                                                        current_section = 'cpu'
+                                                    elif '=== MEMORY ===' in line:
+                                                        current_section = 'memory'
+                                                    elif '=== DISK ===' in line:
+                                                        current_section = 'disk'
+                                                    elif current_section and line.strip():
+                                                        # Extract key metrics
+                                                        if current_section == 'cpu' and '%Cpu' in line:
+                                                            # Extract CPU line
+                                                            header += f"• 🔥 CPU: {line.strip()}\n"
+                                                            metrics_found = True
+                                                        elif current_section == 'memory' and 'Mem:' in line:
+                                                            # Extract memory line
+                                                            header += f"• 💾 RAM: {line.strip()}\n"
+                                                            metrics_found = True
+                                                        elif current_section == 'disk' and '/dev/' in line and '%' in line:
+                                                            # Extract first disk line
+                                                            parts = line.split()
+                                                            if len(parts) >= 5:
+                                                                header += f"• 💿 Disk: {parts[0]} {parts[4]} used\n"
+                                                                metrics_found = True
+                                                                break  # Only show first disk
+            except json.JSONDecodeError:
+                # If not JSON, try plain text parsing
+                if stdout:
+                    lines = stdout.split('\n')
+                    for line in lines:
+                        line_lower = line.lower()
+                        # CPU metrics
+                        if 'cpu' in line_lower and '%' in line:
+                            header += f"• CPU: {line.strip()}\n"
+                            metrics_found = True
+                        # Memory metrics
+                        elif ('mem' in line_lower or 'memory' in line_lower) and ('total' in line_lower or 'used' in line_lower or 'free' in line_lower):
+                            header += f"• RAM: {line.strip()}\n"
+                            metrics_found = True
+                        # Disk metrics
+                        elif ('disk' in line_lower or 'filesystem' in line_lower or '/dev/' in line) and '%' in line:
+                            header += f"• Disk: {line.strip()}\n"
+                            metrics_found = True
+            except Exception as e:
+                logger.error(f"Error parsing Ansible output: {e}")
             
             # If no specific metrics found, show generic message
             if not metrics_found:
