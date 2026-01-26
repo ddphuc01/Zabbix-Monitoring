@@ -276,6 +276,23 @@ async def list_alerts(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error(f"Error listing alerts: {e}")
         await update.message.reply_text(f"❌ Error: {str(e)}")
 
+async def id_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Show current Chat ID"""
+    chat_id = update.effective_chat.id
+    user_id = update.effective_user.id
+    chat_type = update.effective_chat.type
+    
+    msg = f"""
+🆔 <b>Identity Information</b>
+
+📍 <b>Chat ID:</b> <code>{chat_id}</code>
+👤 <b>User ID:</b> <code>{user_id}</code>
+💬 <b>Type:</b> {chat_type}
+
+<i>Use this Chat ID in your .env file for alerts.</i>
+"""
+    await update.message.reply_text(msg, parse_mode='HTML')
+
 async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Show system status"""
     try:
@@ -1562,9 +1579,10 @@ def main():
     application.add_handler(CommandHandler("list", list_alerts))
     application.add_handler(CommandHandler("status", status_command))
     application.add_handler(CommandHandler("fix", fix_alert))
-    application.add_handler(CommandHandler("report", report_command))  # NEW
-    application.add_handler(CommandHandler("emailreport", email_report_command))  # NEW
-    application.add_handler(CommandHandler("htmlreport", html_report_command))  # NEW
+    application.add_handler(CommandHandler("id", id_command))  # NEW
+    application.add_handler(CommandHandler("report", report_command))
+    application.add_handler(CommandHandler("emailreport", email_report_command))
+    application.add_handler(CommandHandler("htmlreport", html_report_command))
     
     # AI Chat handler (for non-command messages)
     application.add_handler(MessageHandler(
@@ -1609,6 +1627,7 @@ def main():
             BotCommand("help", "Hiển thị trợ giúp"),
             BotCommand("list", "Danh sách alerts"),
             BotCommand("status", "Kiểm tra trạng thái hệ thống"),
+            BotCommand("id", "Lấy Chat ID hiện tại"),
             BotCommand("report", "Báo cáo (daily/week/alerts)"),
             BotCommand("htmlreport", "Tải xuống báo cáo HTML"),
             BotCommand("emailreport", "Gửi báo cáo qua email"),

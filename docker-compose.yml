@@ -392,9 +392,9 @@ services:
       MAX_TOKENS: 1000
       TEMPERATURE: 0.3
       DEBUG: "false"
-    dns:
-      - 8.8.8.8
-      - 8.8.4.4
+#    dns:
+#      - 8.8.8.8
+#      - 8.8.4.4
     networks:
       - backend
     depends_on:
