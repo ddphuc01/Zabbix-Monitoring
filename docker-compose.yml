@@ -492,6 +492,9 @@ services:
       GROQ_API_KEY: "${GROQ_API_KEY}"
       REDIS_HOST: redis
       REDIS_PORT: 6379
+    # Map host.docker.internal to Docker gateway IP (required on Linux)
+    extra_hosts:
+      - "host.docker.internal:172.17.0.1"
     networks:
       - backend
     depends_on:
