@@ -716,6 +716,12 @@ def webhook():
         
         # Add Ansible diagnostics if available
         if ansible_data and isinstance(ansible_data, dict):
+            # Determine alert type from trigger name
+            alert_name_lower = alert_name.lower()
+            is_cpu_alert = 'cpu' in alert_name_lower or 'load' in alert_name_lower
+            is_memory_alert = 'memory' in alert_name_lower or 'ram' in alert_name_lower or 'swap' in alert_name_lower
+            is_disk_alert = 'disk' in alert_name_lower or 'space' in alert_name_lower or 'filesystem' in alert_name_lower
+            
             header += "**📈 Thông Số Hệ Thống:**\n"
             
             metrics_found = False
@@ -724,55 +730,149 @@ def webhook():
             if 'metrics' in ansible_data:
                 metrics = ansible_data['metrics']
                 
-                # Extract CPU info
-                cpu_data = metrics.get('cpu', '')
-                if cpu_data:
-                    # Extract key CPU line (%Cpu(s): ...)
-                    for line in cpu_data.split('\n'):
-                        if '%Cpu(s):' in line:
-                            header += f"• 🔥 CPU: {line.strip()}\n"
-                            metrics_found = True
-                            break
-                
-                # Extract Memory info
-                mem_data = metrics.get('memory', '')
-                if mem_data:
-                    # Extract Mem: line
-                    for line in mem_data.split('\n'):
-                        if 'Mem:' in line:
-                            header += f"• 💾 RAM: {line.strip()}\n"
-                            metrics_found = True
-                            break
-                
-                # Extract Disk info
-                disk_data = metrics.get('disk', '')
-                if disk_data:
-                    # Extract first real partition (skip tmpfs)
-                    for line in disk_data.split('\n'):
-                        if '/dev/' in line and '%' in line:
-                            parts = line.split()
-                            if len(parts) >= 5:
-                                header += f"• 💿 Disk: {parts[0]} {parts[4]} used\n"
+                # ==================== CPU ALERT ====================
+                if is_cpu_alert:
+                    # Show CPU usage line
+                    cpu_data = metrics.get('cpu', '')
+                    if cpu_data:
+                        for line in cpu_data.split('\n'):
+                            if '%Cpu(s):' in line:
+                                header += f"• 🔥 **CPU Usage:** {line.strip()}\n"
                                 metrics_found = True
                                 break
-                
-                # Extract Top Processes (first 2-3 high CPU processes)
-                proc_data = metrics.get('processes', '')
-                if proc_data:
-                    lines = proc_data.strip().split('\n')
-                    # Skip header line, show top 2 processes
-                    high_cpu_procs = []
-                    for i, line in enumerate(lines[1:4] if len(lines) > 1 else []):
-                        parts = line.split()
-                        if len(parts) >= 11:
-                            cpu_pct = parts[2]
-                            cmd = ' '.join(parts[10:])
-                            if float(cpu_pct) > 5.0:  # Only show if > 5% CPU
-                                high_cpu_procs.append(f"{cmd[:30]} ({cpu_pct}%)")
                     
-                    if high_cpu_procs:
-                        header += f"• ⚡ Top Process: {high_cpu_procs[0]}\n"
-                        metrics_found = True
+                    # Show TOP 10 CPU PROCESSES
+                    proc_data = metrics.get('processes', '')
+                    if proc_data:
+                        lines = proc_data.strip().split('\n')
+                        header += f"• ⚡ **Top 10 CPU Processes:**\n"
+                        
+                        count = 0
+                        for line in lines[1:]:  # Skip header
+                            if count >= 10:
+                                break
+                            parts = line.split()
+                            if len(parts) >= 11:
+                                user = parts[0]
+                                cpu_pct = parts[2]
+                                mem_pct = parts[3]
+                                cmd = ' '.join(parts[10:])[:40]  # Truncate long commands
+                                
+                                # Format nicely
+                                header += f"   `{count+1:2d}.` **{cpu_pct:>5s}%** CPU | {mem_pct:>4s}% RAM | `{cmd}`\n"
+                                count += 1
+                                metrics_found = True
+                
+                # ==================== MEMORY ALERT ====================
+                elif is_memory_alert:
+                    # Show Memory usage line
+                    mem_data = metrics.get('memory', '')
+                    if mem_data:
+                        for line in mem_data.split('\n'):
+                            if 'Mem:' in line:
+                                header += f"• 💾 **RAM Usage:** {line.strip()}\n"
+                                metrics_found = True
+                                break
+                    
+                    # Show TOP 10 MEMORY PROCESSES
+                    proc_data = metrics.get('processes', '')
+                    if proc_data:
+                        # Need to re-sort by memory (column 4)
+                        lines = proc_data.strip().split('\n')
+                        header += f"• ⚡ **Top 10 RAM Processes:**\n"
+                        
+                        # Parse and sort by memory
+                        process_list = []
+                        for line in lines[1:]:  # Skip header
+                            parts = line.split()
+                            if len(parts) >= 11:
+                                try:
+                                    mem_pct = float(parts[3])
+                                    cpu_pct = parts[2]
+                                    cmd = ' '.join(parts[10:])[:40]
+                                    process_list.append((mem_pct, cpu_pct, cmd))
+                                except ValueError:
+                                    continue
+                        
+                        # Sort by memory descending
+                        process_list.sort(reverse=True, key=lambda x: x[0])
+                        
+                        for i, (mem_pct, cpu_pct, cmd) in enumerate(process_list[:10]):
+                            header += f"   `{i+1:2d}.` **{mem_pct:>5.1f}%** RAM | {cpu_pct:>5s}% CPU | `{cmd}`\n"
+                            metrics_found = True
+                
+                # ==================== DISK ALERT ====================
+                elif is_disk_alert:
+                    # Show ALL disk partitions sorted by usage
+                    disk_data = metrics.get('disk', '')
+                    if disk_data:
+                        header += f"• 💿 **Disk Usage:**\n"
+                        
+                        # Parse disk lines and sort by usage%
+                        disk_list = []
+                        for line in disk_data.split('\n'):
+                            if '/dev/' in line and '%' in line:
+                                parts = line.split()
+                                if len(parts) >= 6:
+                                    filesystem = parts[0]
+                                    size = parts[1]
+                                    used = parts[2]
+                                    avail = parts[3]
+                                    use_pct = parts[4].rstrip('%')
+                                    mount = parts[5]
+                                    
+                                    try:
+                                        use_pct_int = int(use_pct)
+                                        disk_list.append((use_pct_int, filesystem, size, used, avail, use_pct, mount))
+                                    except ValueError:
+                                        continue
+                        
+                        # Sort by usage descending
+                        disk_list.sort(reverse=True, key=lambda x: x[0])
+                        
+                        for use_pct_int, filesystem, size, used, avail, use_pct, mount in disk_list[:5]:
+                            header += f"   • `{filesystem}` **{use_pct}%** used ({used}/{size}) on `{mount}`\n"
+                            metrics_found = True
+                
+                # ==================== GENERIC ALERT (show summary) ====================
+                else:
+                    # Show brief summary of all metrics
+                    cpu_data = metrics.get('cpu', '')
+                    if cpu_data:
+                        for line in cpu_data.split('\n'):
+                            if '%Cpu(s):' in line:
+                                header += f"• 🔥 CPU: {line.strip()}\n"
+                                metrics_found = True
+                                break
+                    
+                    mem_data = metrics.get('memory', '')
+                    if mem_data:
+                        for line in mem_data.split('\n'):
+                            if 'Mem:' in line:
+                                header += f"• 💾 RAM: {line.strip()}\n"
+                                metrics_found = True
+                                break
+                    
+                    disk_data = metrics.get('disk', '')
+                    if disk_data:
+                        for line in disk_data.split('\n'):
+                            if '/dev/' in line and '%' in line:
+                                parts = line.split()
+                                if len(parts) >= 5:
+                                    header += f"• 💿 Disk: {parts[0]} {parts[4]} used\n"
+                                    metrics_found = True
+                                    break
+                    
+                    proc_data = metrics.get('processes', '')
+                    if proc_data:
+                        lines = proc_data.strip().split('\n')
+                        if len(lines) > 1:
+                            parts = lines[1].split()
+                            if len(parts) >= 11:
+                                cpu_pct = parts[2]
+                                cmd = ' '.join(parts[10:])[:30]
+                                header += f"• ⚡ Top Process: {cmd} ({cpu_pct}%)\n"
+                                metrics_found = True
             
             # OLD FORMAT FALLBACK: Try parsing stdout/stderr
             elif 'stdout' in ansible_data or 'stderr' in ansible_data:
