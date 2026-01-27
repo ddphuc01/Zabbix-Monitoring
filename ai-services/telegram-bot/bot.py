@@ -444,6 +444,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif action == 'kill_process':
         hostname = parts[1] if len(parts) > 1 else 'Unknown'
         process_name = parts[2] if len(parts) > 2 else 'Unknown'
+        event_id = parts[3] if len(parts) > 3 else None
         
         # Check authorization
         authorized, msg = is_authorized(user_id, 'fix')
@@ -451,7 +452,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.edit_message_text(f"🔒 {msg}")
             return
         
-        await handle_kill_process(query, hostname, process_name)
+        await handle_kill_process(query, hostname, process_name, event_id)
         return
     
     elif action == 'check_logs':
@@ -1249,7 +1250,7 @@ async def execute_host_diagnostic(query, hostname: str):
             parse_mode='HTML'
         )
 
-async def handle_kill_process(query, hostname: str, process_name: str):
+async def handle_kill_process(query, hostname: str, process_name: str, event_id: str = None):
     """Kill process on target host via Ansible"""
     try:
         await query.edit_message_text(
@@ -1289,34 +1290,62 @@ async def handle_kill_process(query, hostname: str, process_name: str):
                 )
             else:
                 error_msg = result.get('error', 'Unknown error')
+                
+                # Build back to alert button if event_id available
+                keyboard = []
+                if event_id:
+                    keyboard.append([InlineKeyboardButton("↩️ Back to Alert", callback_data=f"back_to_alert:{event_id}")])
+                reply_markup = InlineKeyboardMarkup(keyboard) if keyboard else None
+                
                 await query.edit_message_text(
                     f"❌ <b>Kill Process Failed</b>\n\n"
                     f"Host: <code>{hostname}</code>\n"
                     f"Process: <code>{process_name}</code>\n\n"
                     f"Error: {error_msg}",
-                    parse_mode='HTML'
+                    parse_mode='HTML',
+                    reply_markup=reply_markup
                 )
         else:
+            # Build back to alert button
+            keyboard = []
+            if event_id:
+                keyboard.append([InlineKeyboardButton("↩️ Back to Alert", callback_data=f"back_to_alert:{event_id}")])
+            reply_markup = InlineKeyboardMarkup(keyboard) if keyboard else None
+            
             await query.edit_message_text(
                 f"❌ <b>API Error</b>\n\n"
                 f"Status: {response.status_code}\n"
                 f"Failed to execute kill process command.",
-                parse_mode='HTML'
+                parse_mode='HTML',
+                reply_markup=reply_markup
             )
             
     except requests.Timeout:
+        keyboard = []
+        if event_id:
+            keyboard.append([InlineKeyboardButton("↩️ Back to Alert", callback_data=f"back_to_alert:{event_id}")])
+        reply_markup = InlineKeyboardMarkup(keyboard) if keyboard else None
+        
         await query.edit_message_text(
             f"⏱️ <b>Timeout</b>\n\n"
             f"Ansible API took too long to respond.\n"
             f"Process may still be running.",
-            parse_mode='HTML'
+            parse_mode='HTML',
+            reply_markup=reply_markup
         )
     except Exception as e:
         logger.error(f"Kill process error: {e}")
+        
+        keyboard = []
+        if event_id:
+            keyboard.append([InlineKeyboardButton("↩️ Back to Alert", callback_data=f"back_to_alert:{event_id}")])
+        reply_markup = InlineKeyboardMarkup(keyboard) if keyboard else None
+        
         await query.edit_message_text(
             f"❌ <b>Error</b>\n\n"
             f"Failed to kill process: {str(e)}",
-            parse_mode='HTML'
+            parse_mode='HTML',
+            reply_markup=reply_markup
         )
 
 async def handle_check_logs(query, hostname: str, event_id: str):
@@ -1363,25 +1392,45 @@ async def handle_check_logs(query, hostname: str, event_id: str):
                 )
             else:
                 error_msg = result.get('error', 'Unknown error')
+                
+                keyboard = []
+                if event_id:
+                    keyboard.append([InlineKeyboardButton("↩️ Back to Alert", callback_data=f"back_to_alert:{event_id}")])
+                reply_markup = InlineKeyboardMarkup(keyboard) if keyboard else None
+                
                 await query.edit_message_text(
                     f"❌ <b>Failed to Fetch Logs</b>\n\n"
                     f"Host: <code>{hostname}</code>\n\n"
                     f"Error: {error_msg}",
-                    parse_mode='HTML'
+                    parse_mode='HTML',
+                    reply_markup=reply_markup
                 )
         else:
+            keyboard = []
+            if event_id:
+                keyboard.append([InlineKeyboardButton("↩️ Back to Alert", callback_data=f"back_to_alert:{event_id}")])
+            reply_markup = InlineKeyboardMarkup(keyboard) if keyboard else None
+            
             await query.edit_message_text(
                 f"❌ <b>API Error</b>\n\n"
                 f"Status: {response.status_code}",
-                parse_mode='HTML'
+                parse_mode='HTML',
+                reply_markup=reply_markup
             )
             
     except Exception as e:
         logger.error(f"Check logs error: {e}")
+        
+        keyboard = []
+        if event_id:
+            keyboard.append([InlineKeyboardButton("↩️ Back to Alert", callback_data=f"back_to_alert:{event_id}")])
+        reply_markup = InlineKeyboardMarkup(keyboard) if keyboard else None
+        
         await query.edit_message_text(
             f"❌ <b>Error</b>\n\n"
             f"Failed to fetch logs: {str(e)}",
-            parse_mode='HTML'
+            parse_mode='HTML',
+            reply_markup=reply_markup
         )
 
 async def handle_back_to_alert(query, event_id: str):
@@ -1631,7 +1680,7 @@ Dung emoji de de hieu hon."""
                 action_buttons.append([
                     InlineKeyboardButton(
                         "⚡ Kill Stress Processes",
-                        callback_data=f"kill_process:{hostname}:{process_name}"
+                        callback_data=f"kill_process:{hostname}:{process_name}:{event_id}"
                     )
                 ])
             
@@ -1642,7 +1691,7 @@ Dung emoji de de hieu hon."""
                 action_buttons.append([
                     InlineKeyboardButton(
                         "🔄 Restart Service",
-                        callback_data=f"restart_service:{hostname}:{service_name}"
+                        callback_data=f"restart_service:{hostname}:{service_name}:{event_id}"
                     )
                 ])
             
@@ -1674,19 +1723,29 @@ Dung emoji de de hieu hon."""
             
         except Exception as e:
             logger.error(f"Groq API error: {e}")
+            
+            keyboard = [[InlineKeyboardButton("↩️ Back to Alert", callback_data=f"back_to_alert:{event_id}")]]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            
             await query.edit_message_text(
                 f"❌ <b>AI Analysis Failed</b>\n\n"
                 f"Error: {str(e)}\n\n"
                 f"<i>Groq API may be unavailable or quota exceeded.</i>",
-                parse_mode='HTML'
+                parse_mode='HTML',
+                reply_markup=reply_markup
             )
             
     except Exception as e:
         logger.error(f"AI analysis error: {e}")
+        
+        keyboard = [[InlineKeyboardButton("↩️ Back to Alert", callback_data=f"back_to_alert:{event_id}")]]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
         await query.edit_message_text(
             f"❌ <b>Error</b>\n\n"
             f"Failed to generate AI analysis: {str(e)}",
-            parse_mode='HTML'
+            parse_mode='HTML',
+            reply_markup=reply_markup
         )
     except Exception as e:
         await query.edit_message_text(f"❌ Suppress failed: {str(e)}")
