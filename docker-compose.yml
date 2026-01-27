@@ -488,7 +488,7 @@ services:
       ZABBIX_API_URL: "http://zabbix-web:8080/api_jsonrpc.php"
       ZABBIX_API_USER: "${ZABBIX_USER:-Admin}"
       ZABBIX_API_PASSWORD: "${ZABBIX_PASSWORD:-zabbix}"
-      ANSIBLE_API_URL: "http://ansible-executor:5001"
+      ANSIBLE_API_URL: "http://host.docker.internal:5001"
       GROQ_API_KEY: "${GROQ_API_KEY}"
       REDIS_HOST: redis
       REDIS_PORT: 6379
