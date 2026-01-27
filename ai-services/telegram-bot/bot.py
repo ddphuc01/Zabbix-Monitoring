@@ -867,13 +867,69 @@ async def execute_host_diagnostic(query, hostname: str):
         if response.status_code == 200:
             result = response.json()
             if result.get('status') == 'success':
-                diag_data = result.get('result', {})
+                # Ansible API returns: {"status": "success", "result": {"metrics": {...}}}
+                ansible_result = result.get('result', {})
                 
-                # Format diagnostic results
-                cpu = diag_data.get('cpu', {}).get('usage', 'N/A')
-                memory = diag_data.get('memory', {}).get('used_percent', 'N/A')
-                disk = diag_data.get('disk', {}).get('used_percent', 'N/A')
+                # Check if metrics is nested or direct
+                if 'metrics' in ansible_result:
+                    diag_data = ansible_result['metrics']
+                else:
+                    diag_data = ansible_result
+                
+                # Parse metrics - handle both string and dict formats
+                cpu = 'N/A'
+                memory = 'N/A'
+                disk = 'N/A'
                 uptime = diag_data.get('uptime', 'N/A')
+                
+                # Parse CPU
+                if 'cpu' in diag_data:
+                    cpu_data = diag_data['cpu']
+                    if isinstance(cpu_data, dict):
+                        cpu = cpu_data.get('usage', cpu_data.get('percent', 'N/A'))
+                    elif isinstance(cpu_data, str):
+                        # Extract percentage from string like "95.7%"
+                        import re
+                        match = re.search(r'(\d+\.?\d*)%', cpu_data)
+                        cpu = match.group(1) if match else cpu_data
+                
+                # Parse Memory
+                if 'memory' in diag_data:
+                    mem_data = diag_data['memory']
+                    if isinstance(mem_data, dict):
+                        memory = mem_data.get('used_percent', mem_data.get('percent', 'N/A'))
+                    elif isinstance(mem_data, str):
+                        import re
+                        match = re.search(r'(\d+\.?\d*)%', mem_data)
+                        memory = match.group(1) if match else mem_data
+                
+                # Parse Disk
+                if 'disk' in diag_data:
+                    disk_data = diag_data['disk']
+                    if isinstance(disk_data, dict):
+                        disk = disk_data.get('used_percent', disk_data.get('percent', 'N/A'))
+                    elif isinstance(disk_data, str):
+                        import re
+                        match = re.search(r'(\d+\.?\d*)%', disk_data)
+                        disk = match.group(1) if match else disk_data
+                
+                # Get event_id from query callback_data if available
+                callback_data = query.data
+                event_id = None
+                if ':' in callback_data:
+                    parts = callback_data.split(':')
+                    # diagnostics:hostname or diagnostics:hostname:event_id
+                    if len(parts) >= 3:
+                        event_id = parts[2]
+                
+                # Build keyboard with Back to Alert button
+                keyboard = []
+                if event_id:
+                    keyboard.append([
+                        InlineKeyboardButton("↩️ Back to Alert", callback_data=f"back_to_alert:{event_id}")
+                    ])
+                
+                reply_markup = InlineKeyboardMarkup(keyboard) if keyboard else None
                 
                 await query.edit_message_text(
                     f"🔍 <b>Diagnostic Report</b>\n\n"
@@ -884,7 +940,8 @@ async def execute_host_diagnostic(query, hostname: str):
                     f"• Disk: {disk}%\n"
                     f"• Uptime: {uptime}\n\n"
                     f"<b>Status:</b> ✅ Diagnostic complete",
-                    parse_mode='HTML'
+                    parse_mode='HTML',
+                    reply_markup=reply_markup
                 )
             else:
                 error_msg = result.get('error', 'Unknown error')
