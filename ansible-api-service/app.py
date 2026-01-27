@@ -68,9 +68,33 @@ async def execute_playbook_async(
 ) -> Dict:
     """Execute Ansible playbook asynchronously"""
     start_time = datetime.now()
-    playbook_path = os.path.join('diagnostics', f'{playbook_name}.yml')
     
-    logger.info(f"[{job_id}] Starting playbook: {playbook_name} on {target_host}")
+    # Try finding playbook in multiple directories
+    possible_paths = [
+        os.path.join('diagnostics', f'{playbook_name}.yml'),  # diagnostics/
+        os.path.join('actions', f'{playbook_name}.yml'),      # actions/
+        f'{playbook_name}.yml'                                 # root playbooks/
+    ]
+    
+    # Find which path exists
+    playbook_path = None
+    for path in possible_paths:
+        full_path = os.path.join(PLAYBOOK_DIR, path)
+        if os.path.exists(full_path):
+            playbook_path = path
+            break
+    
+    if not playbook_path:
+        error_msg = f"Playbook '{playbook_name}' not found in: {', '.join(possible_paths)}"
+        logger.error(f"[{job_id}] ❌ {error_msg}")
+        return {
+            'status': 'failed',
+            'result': {},
+            'duration': 0,
+            'error': error_msg
+        }
+    
+    logger.info(f"[{job_id}] Starting playbook: {playbook_path} on {target_host}")
     
     try:
         # Prepare extra vars
