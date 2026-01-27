@@ -372,7 +372,8 @@ services:
       com.zabbix.component: "cache"
 
   # ========================================
-  # AI Webhook Handler (Gemini Integration)
+  # AI Webhook Handler (Groq Integration)
+  # Connects to Ansible REST API running on host machine
   # ========================================
   ai-webhook:
     build:
@@ -392,6 +393,8 @@ services:
       MAX_TOKENS: 1000
       TEMPERATURE: 0.3
       DEBUG: "false"
+      # Ansible API URL - points to host machine service
+      ANSIBLE_API_URL: "http://host.docker.internal:5001"
 #    dns:
 #      - 8.8.8.8
 #      - 8.8.4.4
@@ -417,54 +420,56 @@ services:
           cpus: '0.25'
           memory: 256M
     labels:
-      com.zabbix.description: "AI webhook handler with Gemini integration"
+      com.zabbix.description: "AI webhook handler with Groq integration"
       com.zabbix.component: "ai-webhook"
 
   # ========================================
-  # Ansible Executor (Diagnostic Automation)
+  # Ansible Executor (Diagnostic Automation) - DISABLED
+  # Migrated to host machine for better network access and security
+  # To enable: uncomment this section and update ai-webhook ANSIBLE_API_URL
   # ========================================
-  ansible-executor:
-    build:
-      context: ./ai-services/ansible-executor
-      dockerfile: Dockerfile
-    container_name: zabbix-ansible-executor
-    restart: "${RESTART_POLICY}"
-    environment:
-      ANSIBLE_DIR: /ansible
-      ANSIBLE_HOST_KEY_CHECKING: "False"
-      ANSIBLE_STDOUT_CALLBACK: json
-      REDIS_HOST: redis
-      REDIS_PORT: 6379
-      DIAGNOSTIC_TIMEOUT: 60
-      # GEMINI_API_KEY: "${GEMINI_API_KEY}"  # Deprecated - no longer used
-    volumes:
-      - ./ansible:/ansible:ro
-      - ./ssh-keys:/root/.ssh:ro
-      - ansible-logs:/var/log/ansible
-    networks:
-      - backend
-    depends_on:
-      redis:
-        condition: service_healthy
-      ai-webhook:
-        condition: service_healthy
-    healthcheck:
-      test: ["CMD", "python", "-c", "import ansible_executor; print('OK')"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
-      start_period: 10s
-    deploy:
-      resources:
-        limits:
-          cpus: '0.5'
-          memory: 512M
-        reservations:
-          cpus: '0.1'
-          memory: 128M
-    labels:
-      com.zabbix.description: "Ansible executor for automated diagnostics"
-      com.zabbix.component: "ansible-executor"
+  # ansible-executor:
+  #   build:
+  #     context: ./ai-services/ansible-executor
+  #     dockerfile: Dockerfile
+  #   container_name: zabbix-ansible-executor
+  #   restart: "${RESTART_POLICY}"
+  #   environment:
+  #     ANSIBLE_DIR: /ansible
+  #     ANSIBLE_HOST_KEY_CHECKING: "False"
+  #     ANSIBLE_STDOUT_CALLBACK: json
+  #     REDIS_HOST: redis
+  #     REDIS_PORT: 6379
+  #     DIAGNOSTIC_TIMEOUT: 60
+  #     # GEMINI_API_KEY: "${GEMINI_API_KEY}"  # Deprecated - no longer used
+  #   volumes:
+  #     - ./ansible:/ansible:ro
+  #     - ./ssh-keys:/root/.ssh:ro
+  #     - ansible-logs:/var/log/ansible
+  #   networks:
+  #     - backend
+  #   depends_on:
+  #     redis:
+  #       condition: service_healthy
+  #     ai-webhook:
+  #       condition: service_healthy
+  #   healthcheck:
+  #     test: ["CMD", "python", "-c", "import ansible_executor; print('OK')"]
+  #     interval: 30s
+  #     timeout: 5s
+  #     retries: 3
+  #     start_period: 10s
+  #   deploy:
+  #     resources:
+  #       limits:
+  #         cpus: '0.5'
+  #         memory: 512M
+  #       reservations:
+  #         cpus: '0.1'
+  #         memory: 128M
+  #   labels:
+  #     com.zabbix.description: "Ansible executor for automated diagnostics"
+  #     com.zabbix.component: "ansible-executor"
 
   # ========================================
   # Telegram Bot (Interactive Alerting)
@@ -613,7 +618,8 @@ networks:
 
   backend:
     driver: bridge
-    # internal: true  # Commented out to allow AI services to access external APIs
+    # internal: true  # Cannot enable - ai-webhook needs external access to Groq API and Telegram
+    # While Ansible runs on host, AI services (Groq, Telegram) still need external connectivity
     ipam:
       driver: "${BACKEND_NETWORK_DRIVER}"
       config:

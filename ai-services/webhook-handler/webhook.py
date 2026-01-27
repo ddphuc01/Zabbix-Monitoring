@@ -138,8 +138,9 @@ class CacheManager:
 class AnsibleExecutor:
     """Execute Ansible playbooks via REST API on host machine"""
     
-    # API Configuration - Updated to use ansible-executor service
-    ANSIBLE_API_URL = os.getenv('ANSIBLE_API_URL', 'http://ansible-executor:5001')
+    # API Configuration - Points to Ansible REST API service running on host
+    # host.docker.internal resolves to host machine IP from within container
+    ANSIBLE_API_URL = os.getenv('ANSIBLE_API_URL', 'http://host.docker.internal:5001')
     API_TIMEOUT = int(os.getenv('ANSIBLE_API_TIMEOUT', 90))
 
     @staticmethod

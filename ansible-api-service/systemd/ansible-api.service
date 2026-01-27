@@ -1,17 +1,48 @@
 [Unit]
-Description=Ansible REST API Service
-After=network.target
+Description=Ansible REST API Service for Zabbix Monitoring
+Documentation=https://github.com/ddphuc01/Zabbix-Monitoring
+After=network-online.target
+Wants=network-online.target
 
 [Service]
 Type=simple
 User=root
 WorkingDirectory=/home/phuc/zabbix-monitoring/ansible-api-service
+
+# Environment Variables
 Environment="ANSIBLE_DIR=/home/phuc/zabbix-monitoring/ansible"
 Environment="ANSIBLE_HOST_KEY_CHECKING=False"
+Environment="ANSIBLE_STDOUT_CALLBACK=json"
+Environment="DIAGNOSTIC_TIMEOUT=120"
 Environment="PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
-ExecStart=/usr/bin/python3 -m uvicorn app:app --host 0.0.0.0 --port 5001
+Environment="PYTHONUNBUFFERED=1"
+
+# Start Command
+ExecStart=/usr/bin/python3 -m uvicorn app:app --host 0.0.0.0 --port 5001 --log-level info
+
+# Restart Policy
 Restart=always
 RestartSec=10
+StartLimitBurst=5
+StartLimitIntervalSec=60
+
+# Health Check (optional - requires systemd 240+)
+# ExecStartPost=/bin/sleep 5
+# ExecStartPost=/usr/bin/curl -f http://localhost:5001/health || exit 1
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=ansible-api
+
+# Security Settings
+NoNewPrivileges=true
+PrivateTmp=true
+
+# Resource Limits
+LimitNOFILE=65536
+MemoryMax=1G
+CPUQuota=100%
 
 [Install]
 WantedBy=multi-user.target
