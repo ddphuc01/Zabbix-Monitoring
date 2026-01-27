@@ -1925,22 +1925,14 @@ Dung emoji de de hieu hon."""
             
             # Add selective kill buttons if we found CPU-intensive processes
             if top_processes:
-                # Add a header button (informational)
-                action_buttons.append([
-                    InlineKeyboardButton(
-                        "⚡ Kill Process (select below):",
-                        callback_data="noop"  # No-op callback
-                    )
-                ])
-                
-                # Add button for each top process
+                # Add button for each top process (no header, directly show buttons)
                 for proc in top_processes:
                     # Extract process name from command (get first word)
                     proc_name = proc['command'].split()[0] if proc['command'] else 'unknown'
                     
                     action_buttons.append([
                         InlineKeyboardButton(
-                            f"🔥 {proc['cpu']}% CPU - {proc_name} (PID {proc['pid']})",
+                            f"⚡ Kill Process: {proc['cpu']}% CPU - {proc_name} (PID {proc['pid']})",
                             callback_data=f"kill_pid:{hostname}:{proc['pid']}:{event_id}"
                         )
                     ])
