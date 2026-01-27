@@ -699,6 +699,7 @@ async def acknowledge_alert(query, event_id: str):
             
             # Try to get original alert message from cache
             original_message = None
+            original_buttons = []
             if redis_client:
                 try:
                     cache_key = f"original_alert:{event_id}"
@@ -706,10 +707,32 @@ async def acknowledge_alert(query, event_id: str):
                     if cached_data:
                         alert_data = json.loads(cached_data)
                         original_message = alert_data.get('message_text')
+                        original_buttons = alert_data.get('buttons', [])
                 except Exception as e:
                     logger.warning(f"Could not fetch original alert: {e}")
             
-            # If we have original message, prepend status and remove buttons
+            # Filter buttons: Keep AI Analysis and Run Diagnostics, remove Acknowledge/Ignore
+            filtered_buttons = []
+            if original_buttons:
+                for row in original_buttons:
+                    filtered_row = []
+                    for button in row:
+                        callback_data = button.get('callback_data', '')
+                        # Keep only functional buttons, remove action buttons
+                        if callback_data.startswith(('ai_analysis:', 'diagnostics:')):
+                            filtered_row.append(button)
+                    if filtered_row:
+                        filtered_buttons.append(filtered_row)
+            
+            # Build reply markup if we have buttons
+            reply_markup = None
+            if filtered_buttons:
+                reply_markup = InlineKeyboardMarkup(
+                    [[InlineKeyboardButton(btn['text'], callback_data=btn['callback_data']) 
+                      for btn in row] for row in filtered_buttons]
+                )
+            
+            # If we have original message, prepend status and keep functional buttons
             if original_message:
                 # Prepend status badge
                 updated_message = (
@@ -722,7 +745,7 @@ async def acknowledge_alert(query, event_id: str):
                 await query.edit_message_text(
                     updated_message,
                     parse_mode='Markdown',
-                    reply_markup=None  # Remove all buttons
+                    reply_markup=reply_markup  # Keep functional buttons
                 )
             else:
                 # Fallback if original message not found
@@ -764,6 +787,7 @@ async def ignore_alert(query, event_id: str):
         
         # Try to get original alert message from cache
         original_message = None
+        original_buttons = []
         if redis_client:
             try:
                 cache_key = f"original_alert:{event_id}"
@@ -771,10 +795,32 @@ async def ignore_alert(query, event_id: str):
                 if cached_data:
                     alert_data = json.loads(cached_data)
                     original_message = alert_data.get('message_text')
+                    original_buttons = alert_data.get('buttons', [])
             except Exception as e:
                 logger.warning(f"Could not fetch original alert: {e}")
         
-        # If we have original message, prepend status and remove buttons
+        # Filter buttons: Keep AI Analysis and Run Diagnostics, remove Acknowledge/Ignore
+        filtered_buttons = []
+        if original_buttons:
+            for row in original_buttons:
+                filtered_row = []
+                for button in row:
+                    callback_data = button.get('callback_data', '')
+                    # Keep only functional buttons, remove action buttons
+                    if callback_data.startswith(('ai_analysis:', 'diagnostics:')):
+                        filtered_row.append(button)
+                if filtered_row:
+                    filtered_buttons.append(filtered_row)
+        
+        # Build reply markup if we have buttons
+        reply_markup = None
+        if filtered_buttons:
+            reply_markup = InlineKeyboardMarkup(
+                [[InlineKeyboardButton(btn['text'], callback_data=btn['callback_data']) 
+                  for btn in row] for row in filtered_buttons]
+            )
+        
+        # If we have original message, prepend status and keep functional buttons
         if original_message:
             # Prepend IGNORED status badge
             updated_message = (
@@ -787,7 +833,7 @@ async def ignore_alert(query, event_id: str):
             await query.edit_message_text(
                 updated_message,
                 parse_mode='Markdown',
-                reply_markup=None  # Remove all buttons
+                reply_markup=reply_markup  # Keep functional buttons
             )
         else:
             # Fallback if original message not found
