@@ -747,6 +747,18 @@ async def acknowledge_alert(query, event_id: str):
                     parse_mode='Markdown',
                     reply_markup=reply_markup  # Keep functional buttons
                 )
+                
+                # Cache the acknowledged version for Back to Alert
+                if redis_client:
+                    try:
+                        ack_cache_key = f"acknowledged_alert:{event_id}"
+                        ack_cache_data = {
+                            'message_text': updated_message,
+                            'buttons': filtered_buttons
+                        }
+                        redis_client.setex(ack_cache_key, 3600, json.dumps(ack_cache_data))  # 1 hour TTL
+                    except Exception as e:
+                        logger.warning(f"Failed to cache acknowledged alert: {e}")
             else:
                 # Fallback if original message not found
                 await query.edit_message_text(
@@ -835,6 +847,18 @@ async def ignore_alert(query, event_id: str):
                 parse_mode='Markdown',
                 reply_markup=reply_markup  # Keep functional buttons
             )
+            
+            # Cache the ignored version for Back to Alert
+            if redis_client:
+                try:
+                    ignored_cache_key = f"acknowledged_alert:{event_id}"  # Use same key as acknowledge for consistency
+                    ignored_cache_data = {
+                        'message_text': updated_message,
+                        'buttons': filtered_buttons
+                    }
+                    redis_client.setex(ignored_cache_key, 3600, json.dumps(ignored_cache_data))  # 1 hour TTL
+                except Exception as e:
+                    logger.warning(f"Failed to cache ignored alert: {e}")
         else:
             # Fallback if original message not found
             await query.edit_message_text(
@@ -1043,6 +1067,7 @@ async def execute_host_diagnostic(query, hostname: str):
                 disk_percent = 'N/A'
                 uptime = 'N/A'
                 load_avg = 'N/A'
+                top_processes = []
                 
                 import re
                 
@@ -1066,8 +1091,31 @@ async def execute_host_diagnostic(query, hostname: str):
                             us = float(cpu_match.group(1))
                             idle = float(cpu_match.group(2))
                             cpu_percent = f"{100 - idle:.1f}"
-                        elif isinstance(cpu_raw, dict):
-                            cpu_percent = str(cpu_raw.get('usage', cpu_raw.get('percent', 'N/A')))
+                        
+                        # Extract top processes from top output
+                        # Format: "PID USER PR NI VIRT RES SHR S %CPU %MEM TIME+ COMMAND"
+                        process_lines = cpu_raw.split('\n')
+                        for line in process_lines:
+                            # Match process lines like: "1980863 ansible 20 0 3620 384 384 R 63.6 0.0 0:04.35 stress"
+                            proc_match = re.match(r'\s*(\d+)\s+(\S+)\s+\d+\s+\S+\s+\S+\s+\S+\s+\S+\s+\S+\s+([\d.]+)\s+([\d.]+)\s+[\d:\.]+\s+(.+)', line)
+                            if proc_match and len(top_processes) < 5:
+                                pid = proc_match.group(1)
+                                user = proc_match.group(2)
+                                cpu_usage = proc_match.group(3)
+                                mem_usage = proc_match.group(4)
+                                command = proc_match.group(5).strip()
+                                
+                                # Only add if CPU > 0
+                                if float(cpu_usage) > 0:
+                                    top_processes.append({
+                                        'pid': pid,
+                                        'user': user,
+                                        'cpu': cpu_usage,
+                                        'mem': mem_usage,
+                                        'command': command[:30]  # Truncate long commands
+                                    })
+                    elif isinstance(cpu_raw, dict):
+                        cpu_percent = str(cpu_raw.get('usage', cpu_raw.get('percent', 'N/A')))
                 
                 # Parse Memory data (from free output)
                 if 'memory' in diag_data:
@@ -1107,14 +1155,20 @@ async def execute_host_diagnostic(query, hostname: str):
                         mem_total = str(mem_raw.get('total', 'N/A'))
                         mem_used = str(mem_raw.get('used', 'N/A'))
                 
-                # Parse Disk data
+                # Parse Disk data - look for root partition (/)
                 if 'disk' in diag_data:
                     disk_raw = diag_data['disk']
                     if isinstance(disk_raw, str):
-                        # Extract percentage: "1%" or "26% used"
-                        disk_match = re.search(r'(\d+)%', disk_raw)
-                        if disk_match:
-                            disk_percent = disk_match.group(1)
+                        # Extract from df output for / partition
+                        # Format: "/dev/sda1  100G  26G  74G  26% /"
+                        root_match = re.search(r'(\d+)%\s+/$', disk_raw, re.MULTILINE)
+                        if root_match:
+                            disk_percent = root_match.group(1)
+                        else:
+                            # Fallback: get any percentage
+                            disk_match = re.search(r'(\d+)%', disk_raw)
+                            if disk_match:
+                                disk_percent = disk_match.group(1)
                     elif isinstance(disk_raw, dict):
                         disk_percent = str(disk_raw.get('used_percent', disk_raw.get('percent', 'N/A')))
                 
@@ -1136,6 +1190,13 @@ async def execute_host_diagnostic(query, hostname: str):
                 
                 reply_markup = InlineKeyboardMarkup(keyboard) if keyboard else None
                 
+                # Build process list text
+                process_text = ""
+                if top_processes:
+                    process_text = "\n\n<b>🔥 Top CPU Processes:</b>\n"
+                    for i, proc in enumerate(top_processes, 1):
+                        process_text += f"{i}. <b>{proc['cpu']}%</b> CPU | {proc['command']}\n"
+                
                 # Format output nicely
                 await query.edit_message_text(
                     f"🔍 <b>Diagnostic Report</b>\n\n"
@@ -1145,9 +1206,10 @@ async def execute_host_diagnostic(query, hostname: str):
                     f"│ 🔥 <b>CPU Usage:</b> {cpu_percent}%\n"
                     f"│ 📈 <b>Load Avg:</b> {load_avg}\n"
                     f"│ 💾 <b>Memory:</b> {mem_used} / {mem_total} ({mem_percent}%)\n"
-                    f"│ 💿 <b>Disk:</b> {disk_percent}% used\n"
+                    f"│ 💿 <b>Disk (/):</b> {disk_percent}% used\n"
                     f"│ ⏱️ <b>Uptime:</b> {uptime}\n"
-                    f"└─────────────────────────────┘\n\n"
+                    f"└─────────────────────────────┘"
+                    f"{process_text}\n\n"
                     f"<b>Status:</b> ✅ Diagnostic complete",
                     parse_mode='HTML',
                     reply_markup=reply_markup
@@ -1335,7 +1397,40 @@ async def handle_back_to_alert(query, event_id: str):
             return
         
         cache_key = f"original_alert:{event_id}"
+        acknowledged_key = f"acknowledged_alert:{event_id}"
+        
         try:
+            # First check if there's an acknowledged version
+            acknowledged_alert = redis_client.get(acknowledged_key)
+            if acknowledged_alert:
+                # Restore acknowledged version (with filtered buttons)
+                ack_data = json.loads(acknowledged_alert)
+                alert_text = ack_data.get('message_text', '')
+                buttons_data = ack_data.get('buttons', [])
+                
+                # Reconstruct buttons
+                if buttons_data:
+                    keyboard = []
+                    for row in buttons_data:
+                        button_row = []
+                        for btn in row:
+                            button_row.append(InlineKeyboardButton(
+                                btn['text'],
+                                callback_data=btn['callback_data']
+                            ))
+                        keyboard.append(button_row)
+                    reply_markup = InlineKeyboardMarkup(keyboard)
+                else:
+                    reply_markup = None
+                
+                await query.edit_message_text(
+                    alert_text,
+                    parse_mode='Markdown',
+                    reply_markup=reply_markup
+                )
+                return
+            
+            # If no acknowledged version, check for original
             cached_alert = redis_client.get(cache_key)
             if not cached_alert:
                 # Fallback: try to get from alert_data cache
