@@ -1,0 +1,18 @@
+---
+- name: Kill Process by PID
+  hosts: "{{ target_host }}"
+  gather_facts: no
+  tasks:
+    - name: Kill process by PID
+      shell: "kill {{ pid }}"
+      register: kill_result
+      ignore_errors: yes
+      
+    - name: Check if process was killed
+      shell: "ps -p {{ pid }} > /dev/null 2>&1 && echo 'alive' || echo 'dead'"
+      register: process_status
+      ignore_errors: yes
+      
+    - name: Report result
+      debug:
+        msg: "{{ process_status.stdout == 'dead' | ternary('Successfully killed process ' + pid, 'Process may still be running or already dead') }}"

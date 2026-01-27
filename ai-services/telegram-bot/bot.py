@@ -441,6 +441,24 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await execute_host_diagnostic(query, hostname)
         return
     
+    elif action == 'kill_pid':
+        # New: Kill specific process by PID
+        hostname = parts[1] if len(parts) > 1 else 'Unknown'
+        pid = parts[2] if len(parts) > 2 else None
+        event_id = parts[3] if len(parts) > 3 else None
+        
+        # Check authorization
+        authorized, msg = is_authorized(user_id, 'fix')
+        if not authorized:
+            await query.edit_message_text(f"🔒 {msg}")
+            return
+        
+        if pid:
+            await handle_kill_pid(query, hostname, pid, event_id)
+        else:
+            await query.edit_message_text("❌ Invalid PID")
+        return
+    
     elif action == 'kill_process':
         hostname = parts[1] if len(parts) > 1 else 'Unknown'
         process_name = parts[2] if len(parts) > 2 else 'Unknown'
@@ -1250,6 +1268,212 @@ async def execute_host_diagnostic(query, hostname: str):
             parse_mode='HTML'
         )
 
+async def handle_kill_pid(query, hostname: str, pid: str, event_id: str = None):
+    """Kill specific process by PID on target host via Ansible"""
+    try:
+        await query.edit_message_text(
+            f"⚡ <b>Killing Process...</b>\n\n"
+            f"Host: <code>{hostname}</code>\n"
+            f"PID: <code>{pid}</code>\n\n"
+            f"⏳ Please wait...",
+            parse_mode='HTML'
+        )
+        
+        # Call Ansible API to kill process by PID
+        payload = {
+            "playbook": "kill_pid",
+            "target_host": hostname,
+            "extra_vars": {
+                "pid": pid
+            }
+        }
+        
+        response = requests.post(
+            f"{ANSIBLE_API_URL}/api/v1/playbook/run",
+            json=payload,
+            timeout=30
+        )
+        
+        if response.status_code == 200:
+            result = response.json()
+            if result.get('status') == 'success':
+                keyboard = []
+                if event_id:
+                    keyboard.append([InlineKeyboardButton("↩️ Back to Alert", callback_data=f"back_to_alert:{event_id}")])
+                reply_markup = InlineKeyboardMarkup(keyboard) if keyboard else None
+                
+                await query.edit_message_text(
+                    f"✅ <b>Process Killed Successfully</b>\n\n"
+                    f"Host: <code>{hostname}</code>\n"
+                    f"PID: <code>{pid}</code>\n\n"
+                    f"<b>Status:</b> Process terminated\n"
+                    f"<b>Duration:</b> {result.get('duration', 'N/A')}s\n\n"
+                    f"<i>Run diagnostics to verify CPU usage has decreased.</i>",
+                    parse_mode='HTML',
+                    reply_markup=reply_markup
+                )
+            else:
+                error_msg = result.get('error', 'Unknown error')
+                
+                keyboard = []
+                if event_id:
+                    keyboard.append([InlineKeyboardButton("↩️ Back to Alert", callback_data=f"back_to_alert:{event_id}")])
+                reply_markup = InlineKeyboardMarkup(keyboard) if keyboard else None
+                
+                await query.edit_message_text(
+                    f"❌ <b>Kill Process Failed</b>\n\n"
+                    f"Host: <code>{hostname}</code>\n"
+                    f"PID: <code>{pid}</code>\n\n"
+                    f"Error: {error_msg}",
+                    parse_mode='HTML',
+                    reply_markup=reply_markup
+                )
+        else:
+            keyboard = []
+            if event_id:
+                keyboard.append([InlineKeyboardButton("↩️ Back to Alert", callback_data=f"back_to_alert:{event_id}")])
+            reply_markup = InlineKeyboardMarkup(keyboard) if keyboard else None
+            
+            await query.edit_message_text(
+                f"❌ <b>API Error</b>\n\n"
+                f"Status: {response.status_code}\n"
+                f"Failed to execute kill command.",
+                parse_mode='HTML',
+                reply_markup=reply_markup
+            )
+            
+    except requests.Timeout:
+        keyboard = []
+        if event_id:
+            keyboard.append([InlineKeyboardButton("↩️ Back to Alert", callback_data=f"back_to_alert:{event_id}")])
+        reply_markup = InlineKeyboardMarkup(keyboard) if keyboard else None
+        
+        await query.edit_message_text(
+            f"⏱️ <b>Timeout</b>\n\n"
+            f"Ansible API took too long to respond.\n"
+            f"Process may still be running.",
+            parse_mode='HTML',
+            reply_markup=reply_markup
+        )
+    except Exception as e:
+        logger.error(f"Kill PID error: {e}")
+        
+        keyboard = []
+        if event_id:
+            keyboard.append([InlineKeyboardButton("↩️ Back to Alert", callback_data=f"back_to_alert:{event_id}")])
+        reply_markup = InlineKeyboardMarkup(keyboard) if keyboard else None
+        
+        await query.edit_message_text(
+            f"❌ <b>Error</b>\n\n"
+            f"Failed to kill process: {str(e)}",
+            parse_mode='HTML',
+            reply_markup=reply_markup
+        )
+
+
+async def handle_kill_pid(query, hostname: str, pid: str, event_id: str = None):
+    """Kill specific process by PID on target host via Ansible"""
+    try:
+        await query.edit_message_text(
+            f"⚡ <b>Killing Process...</b>\n\n"
+            f"Host: <code>{hostname}</code>\n"
+            f"PID: <code>{pid}</code>\n\n"
+            f"⏳ Please wait...",
+            parse_mode='HTML'
+        )
+        
+        # Call Ansible API to kill process by PID
+        payload = {
+            "playbook": "kill_pid",
+            "target_host": hostname,
+            "extra_vars": {
+                "pid": pid
+            }
+        }
+        
+        response = requests.post(
+            f"{ANSIBLE_API_URL}/api/v1/playbook/run",
+            json=payload,
+            timeout=30
+        )
+        
+        if response.status_code == 200:
+            result = response.json()
+            if result.get('status') == 'success':
+                keyboard = []
+                if event_id:
+                    keyboard.append([InlineKeyboardButton("↩️ Back to Alert", callback_data=f"back_to_alert:{event_id}")])
+                reply_markup = InlineKeyboardMarkup(keyboard) if keyboard else None
+                
+                await query.edit_message_text(
+                    f"✅ <b>Process Killed Successfully</b>\n\n"
+                    f"Host: <code>{hostname}</code>\n"
+                    f"PID: <code>{pid}</code>\n\n"
+                    f"<b>Status:</b> Process terminated\n"
+                    f"<b>Duration:</b> {result.get('duration', 'N/A')}s\n\n"
+                    f"<i>Run diagnostics to verify CPU usage has decreased.</i>",
+                    parse_mode='HTML',
+                    reply_markup=reply_markup
+                )
+            else:
+                error_msg = result.get('error', 'Unknown error')
+                
+                keyboard = []
+                if event_id:
+                    keyboard.append([InlineKeyboardButton("↩️ Back to Alert", callback_data=f"back_to_alert:{event_id}")])
+                reply_markup = InlineKeyboardMarkup(keyboard) if keyboard else None
+                
+                await query.edit_message_text(
+                    f"❌ <b>Kill Process Failed</b>\n\n"
+                    f"Host: <code>{hostname}</code>\n"
+                    f"PID: <code>{pid}</code>\n\n"
+                    f"Error: {error_msg}",
+                    parse_mode='HTML',
+                    reply_markup=reply_markup
+                )
+        else:
+            keyboard = []
+            if event_id:
+                keyboard.append([InlineKeyboardButton("↩️ Back to Alert", callback_data=f"back_to_alert:{event_id}")])
+            reply_markup = InlineKeyboardMarkup(keyboard) if keyboard else None
+            
+            await query.edit_message_text(
+                f"❌ <b>API Error</b>\n\n"
+                f"Status: {response.status_code}\n"
+                f"Failed to execute kill command.",
+                parse_mode='HTML',
+                reply_markup=reply_markup
+            )
+            
+    except requests.Timeout:
+        keyboard = []
+        if event_id:
+            keyboard.append([InlineKeyboardButton("↩️ Back to Alert", callback_data=f"back_to_alert:{event_id}")])
+        reply_markup = InlineKeyboardMarkup(keyboard) if keyboard else None
+        
+        await query.edit_message_text(
+            f"⏱️ <b>Timeout</b>\n\n"
+            f"Ansible API took too long to respond.\n"
+            f"Process may still be running.",
+            parse_mode='HTML',
+            reply_markup=reply_markup
+        )
+    except Exception as e:
+        logger.error(f"Kill PID error: {e}")
+        
+        keyboard = []
+        if event_id:
+            keyboard.append([InlineKeyboardButton("↩️ Back to Alert", callback_data=f"back_to_alert:{event_id}")])
+        reply_markup = InlineKeyboardMarkup(keyboard) if keyboard else None
+        
+        await query.edit_message_text(
+            f"❌ <b>Error</b>\n\n"
+            f"Failed to kill process: {str(e)}",
+            parse_mode='HTML',
+            reply_markup=reply_markup
+        )
+
+
 async def handle_kill_process(query, hostname: str, process_name: str, event_id: str = None):
     """Kill process on target host via Ansible"""
     try:
@@ -1668,24 +1892,66 @@ Dung emoji de de hieu hon."""
             # Build action buttons based on context
             action_buttons = []
             
-            # Check for CPU/stress process issues
-            if ('cpu' in alert_name or 'load' in alert_name) and ('stress' in analysis_lower or 'process' in analysis_lower):
-                # Extract process name from Ansible data if available
-                process_name = 'stress'  # Default
-                if ansible_data and 'metrics' in ansible_data:
-                    processes = ansible_data['metrics'].get('processes', '')
-                    if 'stress' in processes.lower():
-                        process_name = 'stress'
-                
+            # Extract top CPU processes from diagnostic data for selective kill
+            top_processes = []
+            if ansible_data and 'metrics' in ansible_data:
+                cpu_data = ansible_data['metrics'].get('cpu', '')
+                if isinstance(cpu_data, str):
+                    # Parse process list from top output
+                    import re
+                    process_lines = cpu_data.split('\n')
+                    for line in process_lines:
+                        # Match process lines: "PID USER PR NI VIRT RES SHR S %CPU %MEM TIME+ COMMAND"
+                        proc_match = re.match(r'\s*(\d+)\s+(\S+)\s+\d+\s+\S+\s+\S+\s+\S+\s+\S+\s+\S+\s+([\d.]+)\s+([\d.]+)\s+[\d:\.]+\s+(.+)', line)
+                        if proc_match and len(top_processes) < 5:
+                            pid = proc_match.group(1)
+                            user = proc_match.group(2)
+                            cpu_usage = float(proc_match.group(3))
+                            command = proc_match.group(5).strip()
+                            
+                            # Only add if CPU > 5% (significant usage)
+                            if cpu_usage > 5.0:
+                                top_processes.append({
+                                    'pid': pid,
+                                    'user': user,
+                                    'cpu': cpu_usage,
+                                    'command': command[:30]  # Truncate long commands
+                                })
+            
+            # Add selective kill buttons if we found CPU-intensive processes
+            if top_processes:
+                # Add a header button (informational)
                 action_buttons.append([
                     InlineKeyboardButton(
-                        "⚡ Kill Stress Processes",
-                        callback_data=f"kill_process:{hostname}:{process_name}:{event_id}"
+                        "⚡ Kill Process (select below):",
+                        callback_data="noop"  # No-op callback
+                    )
+                ])
+                
+                # Add button for each top process
+                for proc in top_processes:
+                    # Extract process name from command (get first word)
+                    proc_name = proc['command'].split()[0] if proc['command'] else 'unknown'
+                    
+                    action_buttons.append([
+                        InlineKeyboardButton(
+                            f"🔥 {proc['cpu']}% CPU - {proc_name} (PID {proc['pid']})",
+                            callback_data=f"kill_pid:{hostname}:{proc['pid']}:{event_id}"
+                        )
+                    ])
+            
+            # Fallback: If no process data or low CPU alert, check for generic CPU/load issues
+            elif ('cpu' in alert_name or 'load' in alert_name or 'cpu' in analysis_lower):
+                # Generic kill stress button as fallback
+                action_buttons.append([
+                    InlineKeyboardButton(
+                        "⚡ Kill All Stress Processes",
+                        callback_data=f"kill_process:{hostname}:stress:{event_id}"
                     )
                 ])
             
             # Check for service issues
-            elif 'service' in alert_name or 'service' in analysis_lower:
+            if 'service' in alert_name or 'service' in analysis_lower:
                 # Try to extract service name from alert or ansible data
                 service_name = alert_data.get('service_name', 'unknown')
                 action_buttons.append([
