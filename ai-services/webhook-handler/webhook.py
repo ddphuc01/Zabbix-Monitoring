@@ -1038,6 +1038,26 @@ def send_telegram_alert(message, alert_data=None, enable_ai_button=False):
         response = requests.post(url, json=payload, timeout=10)
         if response.status_code == 200:
             logger.info("✅ Sent Telegram notification with inline buttons")
+            
+            # Cache original alert message for "Back to Alert" button
+            if redis_client and alert_data and event_id:
+                try:
+                    response_data = response.json()
+                    if response_data.get('ok'):
+                        message_id = response_data['result']['message_id']
+                        
+                        # Store original alert with buttons for restoration
+                        original_alert_data = {
+                            'message_text': message,
+                            'message_id': message_id,
+                            'buttons': buttons if keyboard else []
+                        }
+                        
+                        cache_key = f"original_alert:{event_id}"
+                        redis_client.setex(cache_key, 3600, json.dumps(original_alert_data))
+                        logger.info(f"💾 Cached original alert: {cache_key}")
+                except Exception as e:
+                    logger.error(f"Failed to cache original alert: {e}")
         else:
             logger.error(f"❌ Failed to send Telegram: {response.text}")
     except Exception as e:
