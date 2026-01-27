@@ -142,16 +142,27 @@ install_python_deps() {
     
     cd "$SERVICE_DIR"
     
+    # Determine pip install flags based on OS version
+    PIP_FLAGS="-q"
+    
+    # Ubuntu 24.04+ and Debian 12+ use PEP 668 (externally-managed-environment)
+    # Need to use --break-system-packages flag
+    if [[ "$OS" == "ubuntu" && "${OS_VERSION%%.*}" -ge 24 ]] || \
+       [[ "$OS" == "debian" && "${OS_VERSION%%.*}" -ge 12 ]]; then
+        log_warning "Ubuntu 24.04+ / Debian 12+ detected - using --break-system-packages flag"
+        PIP_FLAGS="$PIP_FLAGS --break-system-packages"
+    fi
+    
     # Upgrade pip
-    python3 -m pip install --upgrade pip -q
+    python3 -m pip install --upgrade pip $PIP_FLAGS 2>/dev/null || true
     
     # Install from requirements.txt
     if [ -f requirements.txt ]; then
-        python3 -m pip install -r requirements.txt -q
+        python3 -m pip install -r requirements.txt $PIP_FLAGS
         log_success "Python dependencies installed from requirements.txt ✓"
     else
         log_warning "requirements.txt not found, installing manually..."
-        python3 -m pip install fastapi uvicorn ansible-runner pydantic requests -q
+        python3 -m pip install fastapi uvicorn ansible-runner pydantic requests $PIP_FLAGS
         log_success "Python dependencies installed manually ✓"
     fi
 }

@@ -395,6 +395,9 @@ services:
       DEBUG: "false"
       # Ansible API URL - points to host machine service
       ANSIBLE_API_URL: "http://host.docker.internal:5001"
+    # Map host.docker.internal to Docker gateway IP (required on Linux)
+    extra_hosts:
+      - "host.docker.internal:172.17.0.1"
 #    dns:
 #      - 8.8.8.8
 #      - 8.8.4.4
