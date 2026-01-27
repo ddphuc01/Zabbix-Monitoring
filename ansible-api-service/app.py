@@ -91,7 +91,7 @@ async def execute_playbook_async(
                 extravars=extravars,
                 quiet=False,
                 verbosity=1,  # Increase verbosity for debugging
-                json_mode=False
+                json_mode=True  # Match ansible.cfg stdout_callback=json
             )
             
             return {
