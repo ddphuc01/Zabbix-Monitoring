@@ -83,10 +83,16 @@ async def execute_playbook_async(
         def _run_ansible():
             """Run ansible-runner in thread"""
             # ansible-runner expects playbooks in private_data_dir/project/
-            # Create symlink if it doesn't exist
+            # Create symlink if it doesn't exist or fix if broken
             project_link = os.path.join(ANSIBLE_DIR, 'project')
+            
+            # Remove broken symlink if exists
+            if os.path.islink(project_link) and not os.path.exists(project_link):
+                os.unlink(project_link)
+            
+            # Create symlink with relative path (more portable)
             if not os.path.exists(project_link):
-                os.symlink(PLAYBOOK_DIR, project_link)
+                os.symlink('playbooks', project_link)
             
             r = ansible_runner.run(
                 playbook=playbook_path,
