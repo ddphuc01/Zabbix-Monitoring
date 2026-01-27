@@ -682,12 +682,44 @@ async def execute_restart(query, event_id: str):
 async def acknowledge_alert(query, event_id: str):
     """Acknowledge alert in Zabbix"""
     try:
-        # Call Zabbix API to acknowledge
-        # response = requests.post(f"{ZABBIX_API_URL}/acknowledge/{event_id}")
+        # Get user info
+        user_id = query.from_user.id
+        username = query.from_user.full_name
         
-        await query.edit_message_text(f"✅ Alert #{event_id} acknowledged.", parse_mode='HTML')
+        # Call Zabbix API to acknowledge the event
+        response = zabbix_client.call("event.acknowledge", {
+            "eventids": event_id,
+            "action": 6,  # 6 = Close problem (combination of acknowledge + close)
+            # action: 1=ack, 2=message, 4=change severity, 6=close, 12=ack+close
+            "message": f"Acknowledged via Telegram by {username} (ID: {user_id})"
+        })
+        
+        if response:
+            await query.edit_message_text(
+                f"✅ <b>Alert Acknowledged</b>\n\n"
+                f"Event ID: <code>{event_id}</code>\n"
+                f"Acknowledged by: {username}\n\n"
+                f"<i>Status updated in Zabbix</i>",
+                parse_mode='HTML'
+            )
+            logger.info(f"✅ Event {event_id} acknowledged by user {user_id}")
+        else:
+            await query.edit_message_text(
+                f"⚠️ <b>Acknowledge Request Sent</b>\n\n"
+                f"Event ID: <code>{event_id}</code>\n\n"
+                f"<i>Note: Response was empty but request succeeded</i>",
+                parse_mode='HTML'
+            )
+            
     except Exception as e:
-        await query.edit_message_text(f"❌ Acknowledge failed: {str(e)}")
+        logger.error(f"❌ Acknowledge failed for event {event_id}: {e}")
+        await query.edit_message_text(
+            f"❌ <b>Acknowledge Failed</b>\n\n"
+            f"Event ID: <code>{event_id}</code>\n"
+            f"Error: {str(e)}\n\n"
+            f"<i>Please check Zabbix connection</i>",
+            parse_mode='HTML'
+        )
 
 async def ignore_alert(query, event_id: str):
     """Suppress alert"""
