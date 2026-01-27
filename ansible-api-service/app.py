@@ -100,8 +100,8 @@ async def execute_playbook_async(
                 inventory=INVENTORY_FILE,
                 extravars=extravars,
                 quiet=False,
-                verbosity=1,  # Increase verbosity for debugging
-                json_mode=True  # Match ansible.cfg stdout_callback=json
+                verbosity=1,
+                json_mode=False  # Disabled - conflicts with ansible callback plugins
             )
             
             return {
