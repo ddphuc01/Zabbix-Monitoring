@@ -192,14 +192,55 @@ def parse_ansible_output(result: Dict) -> Dict:
             if event.get('event') == 'runner_on_ok':
                 event_data = event.get('event_data', {})
                 res = event_data.get('res', {})
+                task_name = event_data.get('task', '')
                 
-                # Check if this is our debug output with metrics
-                msg = res.get('msg', {})
-                if isinstance(msg, dict) and 'os_family' in msg:
-                    logger.info(f"📊 Found diagnostic data: {list(msg.keys())}")
+                # Check if this is our "Display metrics" debug task
+                msg = res.get('msg', None)
+                
+                # Format 1: List with section markers (=== CPU ===, etc.)
+                if isinstance(msg, list) and any('===' in str(item) for item in msg):
+                    logger.info(f"📊 Found diagnostic data in list format")
+                    
+                    # Parse sections from list
+                    metrics = {
+                        'cpu': '',
+                        'memory': '',
+                        'disk': '',
+                        'processes': ''
+                    }
+                    
+                    current_section = None
+                    for item in msg:
+                        item_str = str(item)
+                        
+                        if '=== CPU ===' in item_str:
+                            current_section = 'cpu'
+                        elif '=== MEMORY ===' in item_str or '=== MEM ===' in item_str:
+                            current_section = 'memory'
+                        elif '=== DISK ===' in item_str:
+                            current_section = 'disk'
+                        elif '=== TOP PROCESSES ===' in item_str or '=== PROCESSES ===' in item_str:
+                            current_section = 'processes'
+                        elif current_section and item_str.strip() and '===' not in item_str:
+                            # Add content to current section
+                            metrics[current_section] += item_str + '\n'
+                    
+                    # Clean up metrics
+                    for key in metrics:
+                        metrics[key] = metrics[key].strip()
+                    
+                    return {
+                        'success': True,
+                        'metrics': metrics,
+                        'raw_stats': result.get('stats', {})
+                    }
+                
+                # Format 2: Dict with os_family (old format)
+                elif isinstance(msg, dict) and 'os_family' in msg:
+                    logger.info(f"📊 Found diagnostic data in dict format: {list(msg.keys())}")
                     return msg
         
-        # Fallback: return stats
+        # Fallback: return stats only
         logger.warning("⚠️ Diagnostic data not found in expected format")
         return {
             'success': True,
