@@ -876,49 +876,95 @@ async def execute_host_diagnostic(query, hostname: str):
                 else:
                     diag_data = ansible_result
                 
-                # Parse metrics - handle both string and dict formats
-                cpu = 'N/A'
-                memory = 'N/A'
-                disk = 'N/A'
-                uptime = diag_data.get('uptime', 'N/A')
+                # Initialize default values
+                cpu_percent = 'N/A'
+                mem_used = 'N/A'
+                mem_total = 'N/A'
+                mem_percent = 'N/A'
+                disk_percent = 'N/A'
+                uptime = 'N/A'
+                load_avg = 'N/A'
                 
-                # Parse CPU
+                import re
+                
+                # Parse CPU data (from top output)
                 if 'cpu' in diag_data:
-                    cpu_data = diag_data['cpu']
-                    if isinstance(cpu_data, dict):
-                        cpu = cpu_data.get('usage', cpu_data.get('percent', 'N/A'))
-                    elif isinstance(cpu_data, str):
-                        # Extract percentage from string like "95.7%"
-                        import re
-                        match = re.search(r'(\d+\.?\d*)%', cpu_data)
-                        cpu = match.group(1) if match else cpu_data
+                    cpu_raw = diag_data['cpu']
+                    if isinstance(cpu_raw, str):
+                        # Extract uptime: "top - 23:51:31 up 5 days, 1:19"
+                        uptime_match = re.search(r'up\s+(.+?),\s+\d+\s+user', cpu_raw)
+                        if uptime_match:
+                            uptime = uptime_match.group(1).strip()
+                        
+                        # Extract load average: "load average: 5.57, 5.51, 4.17"
+                        load_match = re.search(r'load average:\s+([\d.]+),\s+([\d.]+),\s+([\d.]+)', cpu_raw)
+                        if load_match:
+                            load_avg = f"{load_match.group(1)} / {load_match.group(2)} / {load_match.group(3)}"
+                        
+                        # Extract CPU percentage: "%Cpu(s): 95.5 us, 4.5 sy, 0.0 ni, 0.0 id"
+                        cpu_match = re.search(r'%Cpu\(s\):\s+([\d.]+)\s+us.*?([\d.]+)\s+id', cpu_raw)
+                        if cpu_match:
+                            us = float(cpu_match.group(1))
+                            idle = float(cpu_match.group(2))
+                            cpu_percent = f"{100 - idle:.1f}"
+                        elif isinstance(cpu_raw, dict):
+                            cpu_percent = str(cpu_raw.get('usage', cpu_raw.get('percent', 'N/A')))
                 
-                # Parse Memory
+                # Parse Memory data (from free output)
                 if 'memory' in diag_data:
-                    mem_data = diag_data['memory']
-                    if isinstance(mem_data, dict):
-                        memory = mem_data.get('used_percent', mem_data.get('percent', 'N/A'))
-                    elif isinstance(mem_data, str):
-                        import re
-                        match = re.search(r'(\d+\.?\d*)%', mem_data)
-                        memory = match.group(1) if match else mem_data
+                    mem_raw = diag_data['memory']
+                    if isinstance(mem_raw, str):
+                        # Extract from: "Mem: 3.8Gi total, 516Mi used"
+                        # Or: "Mem:           3.8Gi       516Mi"
+                        mem_match = re.search(r'Mem:\s+(\S+)\s+total.*?(\S+)\s+used', mem_raw)
+                        if not mem_match:
+                            # Alternative format
+                            mem_parts = re.search(r'Mem:\s+(\S+)\s+(\S+)', mem_raw)
+                            if mem_parts:
+                                mem_total = mem_parts.group(1)
+                                mem_used = mem_parts.group(2)
+                        else:
+                            mem_total = mem_match.group(1)
+                            mem_used = mem_match.group(2)
+                        
+                        # Calculate percentage if we have numbers
+                        if mem_total != 'N/A' and mem_used != 'N/A':
+                            try:
+                                # Convert Gi/Mi to MB for calculation
+                                def to_mb(val):
+                                    if 'Gi' in val:
+                                        return float(val.replace('Gi', '')) * 1024
+                                    elif 'Mi' in val:
+                                        return float(val.replace('Mi', ''))
+                                    return float(val)
+                                
+                                total_mb = to_mb(mem_total)
+                                used_mb = to_mb(mem_used)
+                                mem_percent = f"{(used_mb / total_mb * 100):.1f}"
+                            except:
+                                pass
+                    elif isinstance(mem_raw, dict):
+                        mem_percent = str(mem_raw.get('used_percent', mem_raw.get('percent', 'N/A')))
+                        mem_total = str(mem_raw.get('total', 'N/A'))
+                        mem_used = str(mem_raw.get('used', 'N/A'))
                 
-                # Parse Disk
+                # Parse Disk data
                 if 'disk' in diag_data:
-                    disk_data = diag_data['disk']
-                    if isinstance(disk_data, dict):
-                        disk = disk_data.get('used_percent', disk_data.get('percent', 'N/A'))
-                    elif isinstance(disk_data, str):
-                        import re
-                        match = re.search(r'(\d+\.?\d*)%', disk_data)
-                        disk = match.group(1) if match else disk_data
+                    disk_raw = diag_data['disk']
+                    if isinstance(disk_raw, str):
+                        # Extract percentage: "1%" or "26% used"
+                        disk_match = re.search(r'(\d+)%', disk_raw)
+                        if disk_match:
+                            disk_percent = disk_match.group(1)
+                    elif isinstance(disk_raw, dict):
+                        disk_percent = str(disk_raw.get('used_percent', disk_raw.get('percent', 'N/A')))
                 
                 # Get event_id from query callback_data if available
                 callback_data = query.data
                 event_id = None
                 if ':' in callback_data:
                     parts = callback_data.split(':')
-                    # diagnostics:hostname or diagnostics:hostname:event_id
+                    # diagnostics:hostname:event_id
                     if len(parts) >= 3:
                         event_id = parts[2]
                 
@@ -931,14 +977,18 @@ async def execute_host_diagnostic(query, hostname: str):
                 
                 reply_markup = InlineKeyboardMarkup(keyboard) if keyboard else None
                 
+                # Format output nicely
                 await query.edit_message_text(
                     f"🔍 <b>Diagnostic Report</b>\n\n"
-                    f"Host: <code>{hostname}</code>\n\n"
-                    f"<b>System Metrics:</b>\n"
-                    f"• CPU: {cpu}%\n"
-                    f"• Memory: {memory}%\n"
-                    f"• Disk: {disk}%\n"
-                    f"• Uptime: {uptime}\n\n"
+                    f"🖥️ <b>Host:</b> <code>{hostname}</code>\n\n"
+                    f"<b>📊 System Metrics:</b>\n"
+                    f"┌─────────────────────────────┐\n"
+                    f"│ 🔥 <b>CPU Usage:</b> {cpu_percent}%\n"
+                    f"│ 📈 <b>Load Avg:</b> {load_avg}\n"
+                    f"│ 💾 <b>Memory:</b> {mem_used} / {mem_total} ({mem_percent}%)\n"
+                    f"│ 💿 <b>Disk:</b> {disk_percent}% used\n"
+                    f"│ ⏱️ <b>Uptime:</b> {uptime}\n"
+                    f"└─────────────────────────────┘\n\n"
                     f"<b>Status:</b> ✅ Diagnostic complete",
                     parse_mode='HTML',
                     reply_markup=reply_markup
