@@ -94,15 +94,29 @@ async def execute_playbook_async(
             if not os.path.exists(project_link):
                 os.symlink('playbooks', project_link)
             
-            r = ansible_runner.run(
-                playbook=playbook_path,
-                private_data_dir=ANSIBLE_DIR,
-                inventory=INVENTORY_FILE,
-                extravars=extravars,
-                quiet=False,
-                verbosity=1,
-                json_mode=False  # Disabled - conflicts with ansible callback plugins
-            )
+            # Force default callback to prevent ansible-runner from injecting awx_display
+            # which conflicts with ansible.posix.json missing json_indent option
+            import os as local_os
+            env_backup = local_os.environ.get('ANSIBLE_STDOUT_CALLBACK')
+            local_os.environ['ANSIBLE_STDOUT_CALLBACK'] = 'default'
+            
+            try:
+                r = ansible_runner.run(
+                    playbook=playbook_path,
+                    private_data_dir=ANSIBLE_DIR,
+                    inventory=INVENTORY_FILE,
+                    extravars=extravars,
+                    quiet=False,
+                    verbosity=1,
+                    json_mode=False,  # Disabled - conflicts with ansible callback plugins
+                    suppress_env_files=True  # Don't load env files that might override settings
+                )
+            finally:
+                # Restore original env var
+                if env_backup is not None:
+                    local_os.environ['ANSIBLE_STDOUT_CALLBACK'] = env_backup
+                elif 'ANSIBLE_STDOUT_CALLBACK' in local_os.environ:
+                    del local_os.environ['ANSIBLE_STDOUT_CALLBACK']
             
             return {
                 'status': r.status,
