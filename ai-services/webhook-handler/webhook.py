@@ -1014,7 +1014,7 @@ def send_telegram_alert(message, alert_data=None, enable_ai_button=False):
             else:
                 # Generic diagnostic button for other alert types
                 buttons.append(
-                    [{"text": "🔍 Run Diagnostics", "callback_data": f"diagnostics:{hostname}"}]
+                    [{"text": "🔍 Run Diagnostics", "callback_data": f"diagnostics:{hostname}:{event_id}"}]
                 )
             
             # Common buttons for all alerts
