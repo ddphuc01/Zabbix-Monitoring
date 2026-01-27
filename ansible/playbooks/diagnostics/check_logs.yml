@@ -1,0 +1,24 @@
+---
+- name: Check System Logs
+  hosts: "{{ target_host }}"
+  gather_facts: yes
+  tasks:
+    - name: Get systemd journal (last N lines)
+      shell: "journalctl -n {{ lines | default(50) }} --no-pager"
+      register: systemd_logs
+      when: ansible_service_mgr == "systemd"
+      ignore_errors: yes
+      
+    - name: Get syslog (last N lines) for non-systemd systems
+      shell: "tail -n {{ lines | default(50) }} /var/log/syslog"
+      register: syslog_logs
+      when: ansible_service_mgr != "systemd"
+      ignore_errors: yes
+      
+    - name: Set logs output
+      set_fact:
+        logs: "{{ systemd_logs.stdout if ansible_service_mgr == 'systemd' else syslog_logs.stdout }}"
+      
+    - name: Display logs
+      debug:
+        msg: "{{ logs }}"

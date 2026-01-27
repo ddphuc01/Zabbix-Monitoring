@@ -1,0 +1,18 @@
+---
+- name: Kill Process by Name
+  hosts: "{{ target_host }}"
+  gather_facts: no
+  tasks:
+    - name: Kill matching processes
+      shell: "pkill -f '{{ process_name }}'"
+      register: kill_result
+      ignore_errors: yes
+      
+    - name: Check if processes were killed
+      shell: "pgrep -f '{{ process_name }}' | wc -l"
+      register: remaining_processes
+      ignore_errors: yes
+      
+    - name: Report result
+      debug:
+        msg: "{{ kill_result.rc == 0 and remaining_processes.stdout == '0' | ternary('Successfully killed all matching processes', 'Some processes may still be running') }}"

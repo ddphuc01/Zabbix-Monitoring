@@ -440,6 +440,33 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await execute_host_diagnostic(query, hostname)
         return
     
+    elif action == 'kill_process':
+        hostname = parts[1] if len(parts) > 1 else 'Unknown'
+        process_name = parts[2] if len(parts) > 2 else 'Unknown'
+        
+        # Check authorization
+        authorized, msg = is_authorized(user_id, 'fix')
+        if not authorized:
+            await query.edit_message_text(f"🔒 {msg}")
+            return
+        
+        await handle_kill_process(query, hostname, process_name)
+        return
+    
+    elif action == 'check_logs':
+        hostname = parts[1] if len(parts) > 1 else 'Unknown'
+        event_id = parts[2] if len(parts) > 2 else None
+        await handle_check_logs(query, hostname, event_id)
+        return
+    
+    elif action == 'back_to_alert':
+        event_id = parts[1] if len(parts) > 1 else None
+        if event_id:
+            await handle_back_to_alert(query, event_id)
+        else:
+            await query.edit_message_text("❌ Invalid alert reference")
+        return
+    
     elif action == 'ai_analysis':
         event_id = parts[1] if len(parts) > 1 else None
         if event_id:
@@ -893,6 +920,241 @@ async def execute_host_diagnostic(query, hostname: str):
             parse_mode='HTML'
         )
 
+async def handle_kill_process(query, hostname: str, process_name: str):
+    """Kill process on target host via Ansible"""
+    try:
+        await query.edit_message_text(
+            f"⚡ <b>Killing Processes...</b>\n\n"
+            f"Host: <code>{hostname}</code>\n"
+            f"Process: <code>{process_name}</code>\n\n"
+            f"⏳ Please wait...",
+            parse_mode='HTML'
+        )
+        
+        # Call Ansible API to kill process
+        payload = {
+            "playbook": "kill_process",
+            "target_host": hostname,
+            "extra_vars": {
+                "process_name": process_name
+            }
+        }
+        
+        response = requests.post(
+            f"{ANSIBLE_API_URL}/api/v1/playbook/run",
+            json=payload,
+            timeout=30
+        )
+        
+        if response.status_code == 200:
+            result = response.json()
+            if result.get('status') == 'success':
+                await query.edit_message_text(
+                    f"✅ <b>Processes Killed Successfully</b>\n\n"
+                    f"Host: <code>{hostname}</code>\n"
+                    f"Process: <code>{process_name}</code>\n\n"
+                    f"<b>Status:</b> All matching processes terminated\n"
+                    f"<b>Duration:</b> {result.get('duration', 'N/A')}s\n\n"
+                    f"<i>Run diagnostics to verify CPU usage has decreased.</i>",
+                    parse_mode='HTML'
+                )
+            else:
+                error_msg = result.get('error', 'Unknown error')
+                await query.edit_message_text(
+                    f"❌ <b>Kill Process Failed</b>\n\n"
+                    f"Host: <code>{hostname}</code>\n"
+                    f"Process: <code>{process_name}</code>\n\n"
+                    f"Error: {error_msg}",
+                    parse_mode='HTML'
+                )
+        else:
+            await query.edit_message_text(
+                f"❌ <b>API Error</b>\n\n"
+                f"Status: {response.status_code}\n"
+                f"Failed to execute kill process command.",
+                parse_mode='HTML'
+            )
+            
+    except requests.Timeout:
+        await query.edit_message_text(
+            f"⏱️ <b>Timeout</b>\n\n"
+            f"Ansible API took too long to respond.\n"
+            f"Process may still be running.",
+            parse_mode='HTML'
+        )
+    except Exception as e:
+        logger.error(f"Kill process error: {e}")
+        await query.edit_message_text(
+            f"❌ <b>Error</b>\n\n"
+            f"Failed to kill process: {str(e)}",
+            parse_mode='HTML'
+        )
+
+async def handle_check_logs(query, hostname: str, event_id: str):
+    """Fetch recent system logs from target host"""
+    try:
+        await query.edit_message_text(
+            f"📋 <b>Fetching Logs...</b>\n\n"
+            f"Host: <code>{hostname}</code>\n\n"
+            f"⏳ Please wait...",
+            parse_mode='HTML'
+        )
+        
+        # Call Ansible API to get logs
+        payload = {
+            "playbook": "check_logs",
+            "target_host": hostname,
+            "extra_vars": {
+                "lines": 30  # Last 30 lines
+            }
+        }
+        
+        response = requests.post(
+            f"{ANSIBLE_API_URL}/api/v1/playbook/run",
+            json=payload,
+            timeout=30
+        )
+        
+        if response.status_code == 200:
+            result = response.json()
+            if result.get('status') == 'success':
+                logs_data = result.get('result', {})
+                logs_content = logs_data.get('logs', 'No logs available')
+                
+                # Truncate if too long for Telegram
+                if len(logs_content) > 3500:
+                    logs_content = logs_content[-3500:] + "\n\n...[truncated]"
+                
+                await query.edit_message_text(
+                    f"📋 <b>System Logs</b>\n\n"
+                    f"Host: <code>{hostname}</code>\n\n"
+                    f"<code>{logs_content}</code>\n\n"
+                    f"<i>Showing last 30 lines</i>",
+                    parse_mode='HTML'
+                )
+            else:
+                error_msg = result.get('error', 'Unknown error')
+                await query.edit_message_text(
+                    f"❌ <b>Failed to Fetch Logs</b>\n\n"
+                    f"Host: <code>{hostname}</code>\n\n"
+                    f"Error: {error_msg}",
+                    parse_mode='HTML'
+                )
+        else:
+            await query.edit_message_text(
+                f"❌ <b>API Error</b>\n\n"
+                f"Status: {response.status_code}",
+                parse_mode='HTML'
+            )
+            
+    except Exception as e:
+        logger.error(f"Check logs error: {e}")
+        await query.edit_message_text(
+            f"❌ <b>Error</b>\n\n"
+            f"Failed to fetch logs: {str(e)}",
+            parse_mode='HTML'
+        )
+
+async def handle_back_to_alert(query, event_id: str):
+    """Restore original alert message from cache"""
+    try:
+        # Retrieve original alert from Redis
+        if not redis_client:
+            await query.edit_message_text(
+                f"❌ <b>Redis Not Available</b>\n\n"
+                f"Cannot restore original alert.",
+                parse_mode='HTML'
+            )
+            return
+        
+        cache_key = f"original_alert:{event_id}"
+        try:
+            cached_alert = redis_client.get(cache_key)
+            if not cached_alert:
+                # Fallback: try to get from alert_data cache
+                alert_cache_key = f"alert_data:{event_id}"
+                cached_data = redis_client.get(alert_cache_key)
+                
+                if not cached_data:
+                    await query.edit_message_text(
+                        f"❌ <b>Original Alert Not Found</b>\n\n"
+                        f"Event: #{event_id}\n\n"
+                        f"Alert cache has expired.\n\n"
+                        f"<i>Use 'Run Diagnostics' to get fresh data.</i>",
+                        parse_mode='HTML'
+                    )
+                    return
+                
+                # Reconstruct simplified alert from alert_data
+                full_alert_data = json.loads(cached_data)
+                alert_data = full_alert_data.get('alert', {})
+                
+                # Build basic alert message
+                alert_text = (
+                    f"⚠️ <b>Alert Restored</b>\n\n"
+                    f"<b>Issue:</b> {alert_data.get('trigger', 'N/A')}\n"
+                    f"<b>Host:</b> <code>{alert_data.get('host', 'Unknown')}</code>\n"
+                    f"<b>Severity:</b> {alert_data.get('severity', 'Unknown')}\n"
+                    f"<b>Event ID:</b> <code>{event_id}</code>\n\n"
+                    f"<i>Original alert format not available. Use buttons below for actions.</i>"
+                )
+                
+                # Add basic action buttons
+                keyboard = [
+                    [InlineKeyboardButton("🤖 Get AI Analysis", callback_data=f"ai_analysis:{event_id}")],
+                    [InlineKeyboardButton("🔍 Run Diagnostics", callback_data=f"diagnostics:{alert_data.get('host', 'Unknown')}")]
+                ]
+                reply_markup = InlineKeyboardMarkup(keyboard)
+                
+                await query.edit_message_text(
+                    alert_text,
+                    parse_mode='HTML',
+                    reply_markup=reply_markup
+                )
+                return
+            
+            # Restore from original_alert cache
+            original_data = json.loads(cached_alert)
+            alert_text = original_data.get('message_text', '')
+            buttons_data = original_data.get('buttons', [])
+            
+            # Reconstruct buttons
+            if buttons_data:
+                keyboard = []
+                for row in buttons_data:
+                    button_row = []
+                    for btn in row:
+                        button_row.append(InlineKeyboardButton(
+                            btn['text'],
+                            callback_data=btn['callback_data']
+                        ))
+                    keyboard.append(button_row)
+                reply_markup = InlineKeyboardMarkup(keyboard)
+            else:
+                reply_markup = None
+            
+            await query.edit_message_text(
+                alert_text,
+                parse_mode='HTML',
+                reply_markup=reply_markup
+            )
+            
+        except json.JSONDecodeError as e:
+            logger.error(f"Failed to parse cached alert: {e}")
+            await query.edit_message_text(
+                f"❌ <b>Cache Parse Error</b>\n\n"
+                f"Failed to restore alert.",
+                parse_mode='HTML'
+            )
+            
+    except Exception as e:
+        logger.error(f"Back to alert error: {e}")
+        await query.edit_message_text(
+            f"❌ <b>Error</b>\n\n"
+            f"Failed to restore alert: {str(e)}",
+            parse_mode='HTML'
+        )
+
 async def execute_ai_analysis(query, event_id: str):
     """Execute AI analysis on demand when user clicks button"""
     try:
@@ -987,12 +1249,65 @@ Dung emoji de de hieu hon."""
             
             analysis_text = completion.choices[0].message.content
             
-            # Send AI analysis as response
+            # Detect issue type from alert name and AI response
+            hostname = alert_data.get('host', 'Unknown')
+            alert_name = alert_data.get('trigger', '').lower()
+            analysis_lower = analysis_text.lower()
+            
+            # Build action buttons based on context
+            action_buttons = []
+            
+            # Check for CPU/stress process issues
+            if ('cpu' in alert_name or 'load' in alert_name) and ('stress' in analysis_lower or 'process' in analysis_lower):
+                # Extract process name from Ansible data if available
+                process_name = 'stress'  # Default
+                if ansible_data and 'metrics' in ansible_data:
+                    processes = ansible_data['metrics'].get('processes', '')
+                    if 'stress' in processes.lower():
+                        process_name = 'stress'
+                
+                action_buttons.append([
+                    InlineKeyboardButton(
+                        "⚡ Kill Stress Processes",
+                        callback_data=f"kill_process:{hostname}:{process_name}"
+                    )
+                ])
+            
+            # Check for service issues
+            elif 'service' in alert_name or 'service' in analysis_lower:
+                # Try to extract service name from alert or ansible data
+                service_name = alert_data.get('service_name', 'unknown')
+                action_buttons.append([
+                    InlineKeyboardButton(
+                        "🔄 Restart Service",
+                        callback_data=f"restart_service:{hostname}:{service_name}"
+                    )
+                ])
+            
+            # Always add Check Logs and Back to Alert buttons
+            action_buttons.append([
+                InlineKeyboardButton(
+                    "📋 Check Logs",
+                    callback_data=f"check_logs:{hostname}:{event_id}"
+                )
+            ])
+            
+            action_buttons.append([
+                InlineKeyboardButton(
+                    "↩️ Back to Alert",
+                    callback_data=f"back_to_alert:{event_id}"
+                )
+            ])
+            
+            reply_markup = InlineKeyboardMarkup(action_buttons)
+            
+            # Send AI analysis with action buttons
             await query.edit_message_text(
                 f"🤖 <b>AI Analysis</b>\n\n"
                 f"{analysis_text}\n\n"
                 f"<i>Powered by Groq AI</i>",
-                parse_mode='HTML'
+                parse_mode='HTML',
+                reply_markup=reply_markup
             )
             
         except Exception as e:
