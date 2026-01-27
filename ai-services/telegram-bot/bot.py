@@ -695,20 +695,52 @@ async def acknowledge_alert(query, event_id: str):
         })
         
         if response:
-            await query.edit_message_text(
-                f"✅ <b>Alert Acknowledged</b>\n\n"
-                f"Event ID: <code>{event_id}</code>\n"
-                f"Acknowledged by: {username}\n\n"
-                f"<i>Status updated in Zabbix</i>",
-                parse_mode='HTML'
-            )
             logger.info(f"✅ Event {event_id} acknowledged by user {user_id}")
+            
+            # Try to get original alert message from cache
+            original_message = None
+            if redis_client:
+                try:
+                    cache_key = f"original_alert:{event_id}"
+                    cached_data = redis_client.get(cache_key)
+                    if cached_data:
+                        alert_data = json.loads(cached_data)
+                        original_message = alert_data.get('message_text')
+                except Exception as e:
+                    logger.warning(f"Could not fetch original alert: {e}")
+            
+            # If we have original message, prepend status and remove buttons
+            if original_message:
+                # Prepend status badge
+                updated_message = (
+                    f"✅ **ACKNOWLEDGED**\n"
+                    f"_By {username} at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}_\n"
+                    f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+                    f"{original_message}"
+                )
+                
+                await query.edit_message_text(
+                    updated_message,
+                    parse_mode='Markdown',
+                    reply_markup=None  # Remove all buttons
+                )
+            else:
+                # Fallback if original message not found
+                await query.edit_message_text(
+                    f"✅ <b>Alert Acknowledged</b>\n\n"
+                    f"Event ID: <code>{event_id}</code>\n"
+                    f"Acknowledged by: {username}\n\n"
+                    f"<i>Status updated in Zabbix</i>",
+                    parse_mode='HTML',
+                    reply_markup=None
+                )
         else:
             await query.edit_message_text(
                 f"⚠️ <b>Acknowledge Request Sent</b>\n\n"
                 f"Event ID: <code>{event_id}</code>\n\n"
                 f"<i>Note: Response was empty but request succeeded</i>",
-                parse_mode='HTML'
+                parse_mode='HTML',
+                reply_markup=None
             )
             
     except Exception as e:
@@ -718,15 +750,64 @@ async def acknowledge_alert(query, event_id: str):
             f"Event ID: <code>{event_id}</code>\n"
             f"Error: {str(e)}\n\n"
             f"<i>Please check Zabbix connection</i>",
-            parse_mode='HTML'
+            parse_mode='HTML',
+            reply_markup=None
         )
 
 async def ignore_alert(query, event_id: str):
     """Suppress alert"""
     try:
-        await query.edit_message_text(f"🔇 Alert #{event_id} suppressed.", parse_mode='HTML')
+        user_id = query.from_user.id
+        username = query.from_user.full_name
+        
+        logger.info(f"🔕 Event {event_id} ignored by user {user_id}")
+        
+        # Try to get original alert message from cache
+        original_message = None
+        if redis_client:
+            try:
+                cache_key = f"original_alert:{event_id}"
+                cached_data = redis_client.get(cache_key)
+                if cached_data:
+                    alert_data = json.loads(cached_data)
+                    original_message = alert_data.get('message_text')
+            except Exception as e:
+                logger.warning(f"Could not fetch original alert: {e}")
+        
+        # If we have original message, prepend status and remove buttons
+        if original_message:
+            # Prepend IGNORED status badge
+            updated_message = (
+                f"🔕 **IGNORED**\n"
+                f"_By {username} at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}_\n"
+                f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+                f"{original_message}"
+            )
+            
+            await query.edit_message_text(
+                updated_message,
+                parse_mode='Markdown',
+                reply_markup=None  # Remove all buttons
+            )
+        else:
+            # Fallback if original message not found
+            await query.edit_message_text(
+                f"🔕 <b>Alert Ignored</b>\n\n"
+                f"Event ID: <code>{event_id}</code>\n"
+                f"Ignored by: {username}\n\n"
+                f"<i>This alert will be suppressed</i>",
+                parse_mode='HTML',
+                reply_markup=None
+            )
+            
     except Exception as e:
-        await query.edit_message_text(f"❌ Suppress failed: {str(e)}")
+        logger.error(f"❌ Ignore failed: {e}")
+        await query.edit_message_text(
+            f"❌ <b>Ignore Failed</b>\n\n"
+            f"Error: {str(e)}",
+            parse_mode='HTML',
+            reply_markup=None
+        )
 
 async def execute_service_restart(query, hostname: str, service_name: str):
     """Restart Windows/Linux service via Ansible"""
