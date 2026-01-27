@@ -508,6 +508,11 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Execute fix
         await execute_fix(query, event_id)
     
+    elif action == 'noop':
+        # No-op action for informational buttons (e.g., headers)
+        await query.answer("ℹ️ Please select a process below", show_alert=False)
+        return
+    
     elif action == 'diag':
         await execute_diagnostic(query, event_id)
     
