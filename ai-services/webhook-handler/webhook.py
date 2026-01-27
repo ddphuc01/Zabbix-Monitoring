@@ -732,12 +732,27 @@ def webhook():
                 
                 # ==================== CPU ALERT ====================
                 if is_cpu_alert:
-                    # Show CPU usage line
+                    # Show CPU usage line (parse and simplify)
                     cpu_data = metrics.get('cpu', '')
                     if cpu_data:
                         for line in cpu_data.split('\n'):
                             if '%Cpu(s):' in line:
-                                header += f"• 🔥 **CPU Usage:** {line.strip()}\n"
+                                # Parse: %Cpu(s): 95.5 us,  4.5 sy,  0.0 ni,  0.0 id,  0.0 wa,  0.0 hi,  0.0 si,  0.0 st
+                                # Extract key values
+                                try:
+                                    parts = line.split(',')
+                                    us = float(parts[0].split(':')[1].strip().replace('us', '').strip())  # user
+                                    sy = float(parts[1].strip().replace('sy', '').strip())  # system
+                                    id_val = float(parts[3].strip().replace('id', '').strip())  # idle
+                                    
+                                    total_used = 100.0 - id_val
+                                    
+                                    # Simplified format
+                                    header += f"• 🔥 **CPU Usage:** {total_used:.1f}% sử dụng (User: {us:.1f}%, System: {sy:.1f}% | Idle: {id_val:.1f}%)\n"
+                                except:
+                                    # Fallback to raw format if parsing fails
+                                    header += f"• 🔥 **CPU Usage:** {line.strip()}\n"
+                                
                                 metrics_found = True
                                 break
                     

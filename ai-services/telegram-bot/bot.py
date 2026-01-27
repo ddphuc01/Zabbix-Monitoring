@@ -23,6 +23,7 @@ from reports import ReportGenerator
 from email_sender import EmailSender
 import pytz
 import redis
+from groq import Groq
 
 # Logging
 logging.basicConfig(
