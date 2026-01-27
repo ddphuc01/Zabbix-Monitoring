@@ -25,6 +25,10 @@ INVENTORY_FILE = os.path.join(ANSIBLE_DIR, 'inventory/hosts.yml')
 MAX_EXECUTION_TIME = int(os.getenv('DIAGNOSTIC_TIMEOUT', 120))
 API_KEY = os.getenv('ANSIBLE_API_KEY', 'changeme')
 
+# Force Ansible to use project's ansible.cfg instead of /etc/ansible/ansible.cfg
+ANSIBLE_CONFIG = os.path.join(ANSIBLE_DIR, 'ansible.cfg')
+os.environ['ANSIBLE_CONFIG'] = ANSIBLE_CONFIG
+
 # Logging
 logging.basicConfig(
     level=logging.INFO,
