@@ -304,12 +304,23 @@ async def run_playbook(request: PlaybookRunRequest):
     For this implementation, we wait for completion before returning
     """
     
-    # Validate playbook exists
-    playbook_file = Path(PLAYBOOK_DIR) / 'diagnostics' / f'{request.playbook}.yml'
-    if not playbook_file.exists():
+    # Validate playbook exists - search in multiple directories
+    possible_paths = [
+        Path(PLAYBOOK_DIR) / 'diagnostics' / f'{request.playbook}.yml',
+        Path(PLAYBOOK_DIR) / 'actions' / f'{request.playbook}.yml',
+        Path(PLAYBOOK_DIR) / f'{request.playbook}.yml'
+    ]
+    
+    playbook_found = False
+    for playbook_file in possible_paths:
+        if playbook_file.exists():
+            playbook_found = True
+            break
+    
+    if not playbook_found:
         raise HTTPException(
             status_code=404,
-            detail=f"Playbook not found: {request.playbook}"
+            detail=f"Playbook not found: {request.playbook} (searched in diagnostics/, actions/, root)"
         )
     
     # Validate inventory contains target host
