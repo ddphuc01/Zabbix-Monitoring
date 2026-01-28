@@ -1928,6 +1928,37 @@ Dung emoji de de hieu hon."""
             
             reply_markup = InlineKeyboardMarkup(action_buttons)
             
+            # Cache button state to Redis for inline updates
+            if redis_client:
+                try:
+                    # Convert InlineKeyboardButton objects to serializable dicts
+                    button_data = []
+                    for row in action_buttons:
+                        row_data = []
+                        for button in row:
+                            row_data.append({
+                                'text': button.text,
+                                'callback_data': button.callback_data
+                            })
+                        button_data.append(row_data)
+                    
+                    # Cache button state with event_id key
+                    cache_key = f"ai_buttons:{event_id}"
+                    cache_data = {
+                        'buttons': button_data,
+                        'message_text': analysis_text,
+                        'hostname': hostname,
+                        'event_id': event_id
+                    }
+                    
+                    # TTL: 1 hour (enough for interactive session)
+                    redis_client.setex(cache_key, 3600, json.dumps(cache_data))
+                    logger.info(f"Cached {len(button_data)} button rows for event {event_id}")
+                    
+                except Exception as e:
+                    logger.error(f"Failed to cache button state: {e}")
+                    # Continue anyway, feature will degrade gracefully
+            
             # Send AI analysis with action buttons
             await query.edit_message_text(
                 f"🤖 <b>AI Analysis</b>\n\n"
