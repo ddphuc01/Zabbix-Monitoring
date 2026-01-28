@@ -7,10 +7,10 @@ Wants=network-online.target
 [Service]
 Type=simple
 User=root
-WorkingDirectory=/home/phuc/zabbix-monitoring/ansible-api-service
+WorkingDirectory=/home/pnj/Zabbix-Monitoring/ansible-api-service
 
 # Environment Variables
-Environment="ANSIBLE_DIR=/home/phuc/zabbix-monitoring/ansible"
+Environment="ANSIBLE_DIR=/home/pnj/Zabbix-Monitoring/ansible"
 Environment="ANSIBLE_HOST_KEY_CHECKING=False"
 Environment="ANSIBLE_STDOUT_CALLBACK=json"
 Environment="DIAGNOSTIC_TIMEOUT=120"
