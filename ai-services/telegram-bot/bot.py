@@ -1274,23 +1274,79 @@ async def execute_host_diagnostic(query, hostname: str):
         )
 
 async def handle_kill_pid(query, hostname: str, pid: str, event_id: str = None):
-    """Kill specific process by PID on target host via Ansible"""
+    """Kill specific process by PID - update button inline without replacing message"""
     try:
-        await query.edit_message_text(
-            f"⚡ <b>Killing Process...</b>\n\n"
-            f"Host: <code>{hostname}</code>\n"
-            f"PID: <code>{pid}</code>\n\n"
-            f"⏳ Please wait...",
-            parse_mode='HTML'
+        if not event_id:
+            await query.answer("❌ Session expired", show_alert=True)
+            return
+        
+        # Step 1: Get original buttons from Redis cache
+        cache_key = f"ai_buttons:{event_id}"
+        if not redis_client:
+            # Fallback: Edit message text if Redis unavailable
+            await query.edit_message_text(
+                f"❌ <b>Error</b>\n\n"
+                f"Redis not available for button state management.\n"
+                f"Cannot perform inline update.",
+                parse_mode='HTML'
+            )
+            return
+        
+        try:
+            cached_data = redis_client.get(cache_key)
+            if not cached_data:
+                await query.answer("❌ Session expired, please refresh AI Analysis", show_alert=True)
+                return
+            
+            cached_state = json.loads(cached_data)
+            # Convert button dicts back to InlineKeyboardButton objects
+            button_rows = cached_state.get('buttons', [])
+            
+        except Exception as e:
+            logger.error(f"Failed to retrieve button state: {e}")
+            await query.answer("❌ Cache error", show_alert=True)
+            return
+        
+        # Step 2: Find and update the clicked button to "Killing..." state
+        target_callback = f"kill_pid:{hostname}:{pid}:{event_id}"
+        button_found = False
+        
+        for row in button_rows:
+            for btn_data in row:
+                if btn_data.get('callback_data') == target_callback:
+                    # Update button to show "Killing..." state
+                    btn_data['text'] = f"⏳ Killing PID {pid}..."
+                    btn_data['callback_data'] = "noop"  # Disable during execution
+                    button_found = True
+                    break
+            if button_found:
+                break
+        
+        if not button_found:
+            await query.answer("❌ Button state mismatch", show_alert=True)
+            return
+        
+        # Rebuild InlineKeyboardMarkup from button data
+        updated_keyboard = []
+        for row in button_rows:
+            button_row = []
+            for btn_data in row:
+                button_row.append(InlineKeyboardButton(
+                    text=btn_data['text'],
+                    callback_data=btn_data['callback_data']
+                ))
+            updated_keyboard.append(button_row)
+        
+        # Update message keyboard to show "Killing..." state
+        await query.edit_message_reply_markup(
+            reply_markup=InlineKeyboardMarkup(updated_keyboard)
         )
         
-        # Call Ansible API to kill process by PID
+        # Step 3: Execute Ansible kill command
         payload = {
             "playbook": "kill_pid",
             "target_host": hostname,
-            "extra_vars": {
-                "pid": pid
-            }
+            "extra_vars": {"pid": pid}
         }
         
         response = requests.post(
@@ -1299,184 +1355,81 @@ async def handle_kill_pid(query, hostname: str, pid: str, event_id: str = None):
             timeout=30
         )
         
-        if response.status_code == 200:
-            result = response.json()
-            if result.get('status') == 'success':
-                keyboard = []
-                if event_id:
-                    keyboard.append([InlineKeyboardButton("↩️ Back to Alert", callback_data=f"back_to_alert:{event_id}")])
-                reply_markup = InlineKeyboardMarkup(keyboard) if keyboard else None
-                
-                await query.edit_message_text(
-                    f"✅ <b>Process Killed Successfully</b>\n\n"
-                    f"Host: <code>{hostname}</code>\n"
-                    f"PID: <code>{pid}</code>\n\n"
-                    f"<b>Status:</b> Process terminated\n"
-                    f"<b>Duration:</b> {result.get('duration', 'N/A')}s\n\n"
-                    f"<i>Run diagnostics to verify CPU usage has decreased.</i>",
-                    parse_mode='HTML',
-                    reply_markup=reply_markup
-                )
-            else:
-                error_msg = result.get('error', 'Unknown error')
-                
-                keyboard = []
-                if event_id:
-                    keyboard.append([InlineKeyboardButton("↩️ Back to Alert", callback_data=f"back_to_alert:{event_id}")])
-                reply_markup = InlineKeyboardMarkup(keyboard) if keyboard else None
-                
-                await query.edit_message_text(
-                    f"❌ <b>Kill Process Failed</b>\n\n"
-                    f"Host: <code>{hostname}</code>\n"
-                    f"PID: <code>{pid}</code>\n\n"
-                    f"Error: {error_msg}",
-                    parse_mode='HTML',
-                    reply_markup=reply_markup
-                )
-        else:
-            keyboard = []
-            if event_id:
-                keyboard.append([InlineKeyboardButton("↩️ Back to Alert", callback_data=f"back_to_alert:{event_id}")])
-            reply_markup = InlineKeyboardMarkup(keyboard) if keyboard else None
-            
-            await query.edit_message_text(
-                f"❌ <b>API Error</b>\n\n"
-                f"Status: {response.status_code}\n"
-                f"Failed to execute kill command.",
-                parse_mode='HTML',
-                reply_markup=reply_markup
-            )
-            
-    except requests.Timeout:
-        keyboard = []
-        if event_id:
-            keyboard.append([InlineKeyboardButton("↩️ Back to Alert", callback_data=f"back_to_alert:{event_id}")])
-        reply_markup = InlineKeyboardMarkup(keyboard) if keyboard else None
-        
-        await query.edit_message_text(
-            f"⏱️ <b>Timeout</b>\n\n"
-            f"Ansible API took too long to respond.\n"
-            f"Process may still be running.",
-            parse_mode='HTML',
-            reply_markup=reply_markup
-        )
-    except Exception as e:
-        logger.error(f"Kill PID error: {e}")
-        
-        keyboard = []
-        if event_id:
-            keyboard.append([InlineKeyboardButton("↩️ Back to Alert", callback_data=f"back_to_alert:{event_id}")])
-        reply_markup = InlineKeyboardMarkup(keyboard) if keyboard else None
-        
-        await query.edit_message_text(
-            f"❌ <b>Error</b>\n\n"
-            f"Failed to kill process: {str(e)}",
-            parse_mode='HTML',
-            reply_markup=reply_markup
-        )
-
-
-async def handle_kill_pid(query, hostname: str, pid: str, event_id: str = None):
-    """Kill specific process by PID on target host via Ansible"""
-    try:
-        await query.edit_message_text(
-            f"⚡ <b>Killing Process...</b>\n\n"
-            f"Host: <code>{hostname}</code>\n"
-            f"PID: <code>{pid}</code>\n\n"
-            f"⏳ Please wait...",
-            parse_mode='HTML'
-        )
-        
-        # Call Ansible API to kill process by PID
-        payload = {
-            "playbook": "kill_pid",
-            "target_host": hostname,
-            "extra_vars": {
-                "pid": pid
-            }
-        }
-        
-        response = requests.post(
-            f"{ANSIBLE_API_URL}/api/v1/playbook/run",
-            json=payload,
-            timeout=30
-        )
+        # Step 4: Update button based on result
+        success = False
+        error_msg = "Unknown error"
         
         if response.status_code == 200:
             result = response.json()
             if result.get('status') == 'success':
-                keyboard = []
-                if event_id:
-                    keyboard.append([InlineKeyboardButton("↩️ Back to Alert", callback_data=f"back_to_alert:{event_id}")])
-                reply_markup = InlineKeyboardMarkup(keyboard) if keyboard else None
-                
-                await query.edit_message_text(
-                    f"✅ <b>Process Killed Successfully</b>\n\n"
-                    f"Host: <code>{hostname}</code>\n"
-                    f"PID: <code>{pid}</code>\n\n"
-                    f"<b>Status:</b> Process terminated\n"
-                    f"<b>Duration:</b> {result.get('duration', 'N/A')}s\n\n"
-                    f"<i>Run diagnostics to verify CPU usage has decreased.</i>",
-                    parse_mode='HTML',
-                    reply_markup=reply_markup
-                )
+                success = True
             else:
-                error_msg = result.get('error', 'Unknown error')
-                
-                keyboard = []
-                if event_id:
-                    keyboard.append([InlineKeyboardButton("↩️ Back to Alert", callback_data=f"back_to_alert:{event_id}")])
-                reply_markup = InlineKeyboardMarkup(keyboard) if keyboard else None
-                
-                await query.edit_message_text(
-                    f"❌ <b>Kill Process Failed</b>\n\n"
-                    f"Host: <code>{hostname}</code>\n"
-                    f"PID: <code>{pid}</code>\n\n"
-                    f"Error: {error_msg}",
-                    parse_mode='HTML',
-                    reply_markup=reply_markup
-                )
+                error_msg = result.get('error', 'Playbook failed')[:30]  # Truncate
         else:
-            keyboard = []
-            if event_id:
-                keyboard.append([InlineKeyboardButton("↩️ Back to Alert", callback_data=f"back_to_alert:{event_id}")])
-            reply_markup = InlineKeyboardMarkup(keyboard) if keyboard else None
-            
-            await query.edit_message_text(
-                f"❌ <b>API Error</b>\n\n"
-                f"Status: {response.status_code}\n"
-                f"Failed to execute kill command.",
-                parse_mode='HTML',
-                reply_markup=reply_markup
-            )
-            
-    except requests.Timeout:
-        keyboard = []
-        if event_id:
-            keyboard.append([InlineKeyboardButton("↩️ Back to Alert", callback_data=f"back_to_alert:{event_id}")])
-        reply_markup = InlineKeyboardMarkup(keyboard) if keyboard else None
+            error_msg = f"API {response.status_code}"
         
-        await query.edit_message_text(
-            f"⏱️ <b>Timeout</b>\n\n"
-            f"Ansible API took too long to respond.\n"
-            f"Process may still be running.",
-            parse_mode='HTML',
-            reply_markup=reply_markup
+        # Find button again and update with final state
+        for row in button_rows:
+            for btn_data in row:
+                if btn_data['callback_data'] == "noop" and f"PID {pid}" in btn_data['text']:
+                    if success:
+                        # SUCCESS: Update to checkmark, keep disabled
+                        btn_data['text'] = f"✅ Killed: PID {pid}"
+                        btn_data['callback_data'] = "noop"
+                    else:
+                        # FAILURE: Update with error, re-enable for retry
+                        btn_data['text'] = f"❌ Failed: PID {pid}"
+                        btn_data['callback_data'] = target_callback  # Re-enable button
+                    break
+        
+        # Rebuild keyboard with final state
+        final_keyboard = []
+        for row in button_rows:
+            button_row = []
+            for btn_data in row:
+                button_row.append(InlineKeyboardButton(
+                    text=btn_data['text'],
+                    callback_data=btn_data['callback_data']
+                ))
+            final_keyboard.append(button_row)
+        
+        # Update message keyboard with final state
+        await query.edit_message_reply_markup(
+            reply_markup=InlineKeyboardMarkup(final_keyboard)
         )
+        
+        # Update cache with new button state
+        cached_state['buttons'] = button_rows
+        redis_client.setex(cache_key, 3600, json.dumps(cached_state))
+        
+        # Show feedback popup
+        if success:
+            await query.answer(f"✅ Process {pid} killed successfully", show_alert=False)
+        else:
+            await query.answer(f"❌ Kill failed: {error_msg}", show_alert=True)
+        
+    except requests.Timeout:
+        logger.error(f"Ansible API timeout for PID {pid}")
+        # Update button to show timeout error
+        for row in button_rows:
+            for btn_data in row:
+                if btn_data['callback_data'] == "noop" and f"PID {pid}" in btn_data['text']:
+                    btn_data['text'] = f"⏱️ Timeout: PID {pid}"
+                    btn_data['callback_data'] = target_callback  # Re-enable
+                    break
+        
+        final_keyboard = [[InlineKeyboardButton(text=btn['text'], callback_data=btn['callback_data']) for btn in row] for row in button_rows]
+        await query.edit_message_reply_markup(reply_markup=InlineKeyboardMarkup(final_keyboard))
+        await query.answer("⏱️ Ansible API timeout", show_alert=True)
+        
     except Exception as e:
         logger.error(f"Kill PID error: {e}")
-        
-        keyboard = []
-        if event_id:
-            keyboard.append([InlineKeyboardButton("↩️ Back to Alert", callback_data=f"back_to_alert:{event_id}")])
-        reply_markup = InlineKeyboardMarkup(keyboard) if keyboard else None
-        
-        await query.edit_message_text(
-            f"❌ <b>Error</b>\n\n"
-            f"Failed to kill process: {str(e)}",
-            parse_mode='HTML',
-            reply_markup=reply_markup
-        )
+        await query.answer(f"❌ Error: {str(e)[:50]}", show_alert=True)
+
+
+
+
+
 
 
 async def handle_kill_process(query, hostname: str, process_name: str, event_id: str = None):
